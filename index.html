@@ -1,0 +1,651 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>こつこつ</title>
+<meta name="description" content="貯金の目標と、貯まっていく様子がひと目でわかる自分用アプリ">
+<meta name="theme-color" content="#1f3a34">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="こつこつ">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&display=swap">
+<style>
+/* 1カラム。上に合計、その下に目標カード。記録は右下の「＋」から。データは端末内（localStorage）に保存 */
+:root{
+  --bg:#f1f3f0; --surface:#ffffff; --ink:#1c2b27; --sub:#5d6b66; --line:#d9dfdb;
+  --acc:#1f6f5c; --accink:#ffffff; --accsoft:#e2efea;
+  --in:#1f6f5c; --out:#b4452f; --done:#c08a00;
+  --f-body:"BIZ UDPGothic","Hiragino Sans","Yu Gothic UI","Noto Sans JP",system-ui,sans-serif;
+  color-scheme:light
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0f1513; --surface:#18211e; --ink:#e6ece9; --sub:#9aa8a2; --line:#2a3632;
+  --acc:#4fbf9f; --accink:#0f1513; --accsoft:#1d302a; --in:#4fbf9f; --out:#f08a72; --done:#e9b84c; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0f1513; --surface:#18211e; --ink:#e6ece9; --sub:#9aa8a2; --line:#2a3632;
+  --acc:#4fbf9f; --accink:#0f1513; --accsoft:#1d302a; --in:#4fbf9f; --out:#f08a72; --done:#e9b84c; color-scheme:dark}
+
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 var(--f-body);
+  padding:max(12px,env(safe-area-inset-top,0px)) 16px calc(84px + env(safe-area-inset-bottom,0px))}
+main{max-width:520px;margin:0 auto}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+.num{font-variant-numeric:tabular-nums}
+h1{font-size:15px;margin:0 0 10px;color:var(--sub);font-weight:700;display:flex;justify-content:space-between}
+h2{font-size:14px;color:var(--sub);margin:18px 0 8px;font-weight:700}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:14px 16px;margin-bottom:10px}
+
+/* 合計 */
+.total .big{font-size:34px;font-weight:700;line-height:1.2}
+.total .row{display:flex;gap:16px;color:var(--sub);font-size:14px;margin-top:4px}
+.plus{color:var(--in)} .minus{color:var(--out)}
+
+/* 目標カード */
+.goal{display:block;width:100%;text-align:left;border:1px solid var(--line)}
+.goal .top{display:flex;align-items:center;gap:10px}
+.goal .ic{font-size:22px;width:36px;height:36px;border-radius:10px;display:grid;place-items:center;background:var(--accsoft);flex:none}
+.goal .name{font-weight:700;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.goal .pct{font-weight:700}
+.bar{height:8px;border-radius:4px;background:var(--line);overflow:hidden;margin:10px 0 6px}
+.bar i{display:block;height:100%;border-radius:4px;background:var(--c,var(--acc))}
+.goal .meta{display:flex;justify-content:space-between;font-size:13px;color:var(--sub);gap:8px}
+.btn.ai{width:100%;margin-top:12px;background:var(--accsoft);border-color:transparent;color:var(--ink)}
+.guide summary{cursor:pointer;font-weight:700;font-size:14px}
+.guide ol{padding-left:1.3em;margin:8px 0;font-size:14px}.guide li{margin-bottom:6px}
+.guide code{background:var(--bg);border-radius:4px;padding:0 4px;font-size:13px}
+.mon{display:flex;align-items:center;gap:4px;color:var(--ink)}
+.mon .x{font-size:20px;color:var(--acc)} .mon .x:disabled{opacity:.3}
+.cat{display:grid;grid-template-columns:7.5em 1fr auto;align-items:center;gap:8px;font-size:14px;padding:3px 0}
+.cbar{height:8px;border-radius:4px;background:var(--line);overflow:hidden}.cbar i{display:block;height:100%;border-radius:4px}
+.list li.day{font-size:12px;color:var(--sub);font-weight:700;padding:10px 0 2px;border-bottom:0}
+.tag{font-size:11px;font-weight:700;color:var(--sub);border:1px solid var(--line);border-radius:6px;padding:0 6px}
+.badge{font-size:12px;font-weight:700;color:var(--done);border:1px solid var(--done);border-radius:999px;padding:0 8px}
+.empty{color:var(--sub);text-align:center;padding:28px 8px}
+
+/* 詳細 */
+.back{background:none;border:0;color:var(--acc);padding:4px 0;margin-bottom:6px}
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+.stats div{background:var(--bg);border-radius:10px;padding:8px 10px}
+.stats small{display:block;color:var(--sub);font-size:12px}
+.stats b{font-size:17px}
+.list{list-style:none;margin:0;padding:0}
+.list li{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}
+.list li:last-child{border-bottom:0}
+.list .d{color:var(--sub);font-size:13px;width:48px;flex:none}
+.list .m{flex:1;min-width:0;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.list .a{font-weight:700}
+.x{background:none;border:0;color:var(--sub);padding:2px 6px;font-size:18px;line-height:1}
+.btns{display:flex;gap:8px;margin-top:12px}
+.btn{flex:1;border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:10px;font-weight:700}
+.btn.pri{background:var(--acc);color:var(--accink);border-color:var(--acc)}
+.btn.warn{color:var(--out)}
+
+/* グラフ */
+.chart svg{display:block;width:100%;height:auto}
+.chart text{fill:var(--sub);font-size:11px;font-family:var(--f-body)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:13px;color:var(--sub);margin-top:8px}
+.legend span::before{content:"";display:inline-block;width:10px;height:10px;border-radius:3px;background:var(--c);margin-right:5px;vertical-align:-1px}
+
+/* 下のタブ */
+nav.tabs{position:fixed;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--line);
+  display:flex;justify-content:center;padding-bottom:env(safe-area-inset-bottom,0px);z-index:5}
+nav.tabs button{flex:1;max-width:173px;background:none;border:0;padding:10px 0 12px;color:var(--sub);font-size:13px;font-weight:700}
+nav.tabs button[aria-current="page"]{color:var(--acc)}
+.fab{position:fixed;right:max(16px,calc(50% - 244px));bottom:calc(68px + env(safe-area-inset-bottom,0px));z-index:6;
+  width:56px;height:56px;border-radius:50%;border:0;background:var(--acc);color:var(--accink);font-size:30px;line-height:1;
+  box-shadow:0 4px 14px rgba(0,0,0,.18)}
+
+/* 入力シート */
+.sheet{position:fixed;inset:0;z-index:10;background:rgba(0,0,0,.35);display:flex;align-items:flex-end;justify-content:center}
+.sheet form{background:var(--surface);width:100%;max-width:520px;border-radius:18px 18px 0 0;
+  padding:16px 16px calc(16px + env(safe-area-inset-bottom,0px));max-height:92vh;overflow:auto}
+.sheet h3{margin:0 0 10px;font-size:16px}
+label{display:block;font-size:13px;color:var(--sub);margin:10px 0 4px}
+input,select,textarea{width:100%;border:1px solid var(--line);border-radius:10px;background:var(--bg);padding:10px 12px}
+.amount{font-size:28px;font-weight:700;text-align:right}
+.seg{display:flex;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.seg button{flex:1;border:0;background:var(--bg);padding:8px;font-weight:700;color:var(--sub)}
+.seg button[aria-pressed="true"]{background:var(--acc);color:var(--accink)}
+.seg button.out[aria-pressed="true"]{background:var(--out);color:#fff}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chips button{border:1px solid var(--line);background:var(--bg);border-radius:999px;padding:5px 12px;font-size:14px}
+.chips button[aria-pressed="true"]{border-color:var(--acc);background:var(--accsoft);color:var(--ink);font-weight:700}
+.quick{display:flex;gap:6px;margin-top:6px}
+.quick button{flex:1;border:1px solid var(--line);background:var(--bg);border-radius:8px;padding:4px 0;font-size:13px}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.icons button{font-size:20px;padding:4px 8px}
+.colors button{width:30px;height:30px;padding:0;border-radius:50%;background:var(--c)}
+.colors button[aria-pressed="true"]{outline:3px solid var(--ink);outline-offset:2px}
+.hint{font-size:13px;color:var(--sub);margin:6px 0 0}
+.toast{position:fixed;left:50%;bottom:calc(140px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:20;
+  background:var(--ink);color:var(--bg);padding:8px 16px;border-radius:999px;font-size:14px;white-space:nowrap}
+</style>
+</head>
+<body>
+<main id="app"></main>
+<button class="fab" id="fab" aria-label="記録する">＋</button>
+<nav class="tabs">
+  <button data-tab="home">ホーム</button>
+  <button data-tab="spend">出費</button>
+  <button data-tab="chart">グラフ</button>
+  <button data-tab="settings">設定</button>
+</nav>
+<div class="sheet" id="sheet" hidden></div>
+<input type="file" id="payfile" accept=".txt,text/plain" hidden>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+'use strict';
+const KEY='kotsukotsu-v1';
+const ICONS=['💰','✈️','🏠','🚗','💻','🎓','🎁','📷','🎮','🏝️','💍','🩺'];
+const COLORS=['#1f6f5c','#2f6db5','#b4452f','#c08a00','#7a4fb0','#3a8f9e'];
+const $=s=>document.querySelector(s);
+const yen=n=>'¥'+Math.round(n).toLocaleString('ja-JP');
+const sgn=n=>(n>0?'+':n<0?'−':'')+yen(Math.abs(n));
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+const today=()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')};
+const md=s=>{const[,m,d]=s.split('-');return (+m)+'/'+(+d)};
+
+/* ---------- 保存 ---------- */
+let S=load();
+function load(){
+  let s=null;
+  try{s=JSON.parse(localStorage.getItem(KEY))}catch(e){}
+  if(!s||!s.goals)s={v:1,goals:[],tx:[],theme:'auto'};
+  return fill(s);
+}
+/* 出費まわりの項目がない古いデータにも足す */
+function fill(s){s.spend=s.spend||[];s.rules=s.rules||{};s.seen=s.seen||{};return s}
+
+/* ---------- 出費 ---------- */
+const CATS=[['食費','🍙'],['カフェ','☕'],['コンビニ','🏪'],['交通','🚃'],['買い物','🛍️'],['日用品','🧴'],['娯楽','🎬'],['サブスク','🔁'],['その他','📦']];
+const CAT_ICON=Object.fromEntries(CATS);
+const CAT_COLOR={'食費':'#1f6f5c','カフェ':'#8a5a3c','コンビニ':'#2f6db5','交通':'#3a8f9e','買い物':'#b4452f','日用品':'#7a4fb0','娯楽':'#c08a00','サブスク':'#5d6b66','その他':'#9aa8a2'};
+/* 店名から分類する。自分で直した分類（S.rules）を先に使う */
+const AUTO_RULES=[
+  ['コンビニ',/セブン|ｾﾌﾞﾝ|7-?ELEVEN|ローソン|LAWSON|ファミリーマート|ファミマ|FAMILYMART|ミニストップ|デイリーヤマザキ/i],
+  ['カフェ',/スターバックス|STARBUCKS|ドトール|DOUTOR|タリーズ|TULLY|コメダ|エクセルシオール|ブルーボトル|カフェ|CAFE|COFFEE/i],
+  ['交通',/^JR|ＪＲ|SUICA|ICOCA|PASMO|モバイルSuica|阪急|阪神|京阪|近鉄|南海|メトロ|METRO|地下鉄|タクシー|TAXI|^GO$|バス/i],
+  ['サブスク',/APPLE\.COM|ITUNES|SPOTIFY|NETFLIX|AMAZON PRIME|プライム|YOUTUBE|DISNEY|ADOBE|CHATGPT|OPENAI|ANTHROPIC|CLAUDE/i],
+  ['食費',/マクドナルド|MCDONALD|吉野家|すき家|松屋|サイゼリヤ|ガスト|スシロー|くら寿司|はま寿司|モスバーガー|ケンタッキー|KFC|丸亀|餃子の王将|CoCo壱|スーパー|ライフ|イオン|AEON|業務スーパー|万代|コープ|成城石井/i],
+  ['日用品',/マツモトキヨシ|マツキヨ|スギ薬局|ココカラ|ダイソー|DAISO|セリア|キャンドゥ|ドラッグ|薬局|ツルハ|ウエルシア/i],
+  ['買い物',/AMAZON|アマゾン|楽天|RAKUTEN|ユニクロ|UNIQLO|^GU$|ジーユー|無印|MUJI|ZARA|ヨドバシ|ビックカメラ|ロフト|LOFT|ハンズ|ZOZO/i],
+  ['娯楽',/映画|シネマ|CINEMA|TOHO|イオンシネマ|カラオケ|ラウンドワン|ROUND1|チケット|TICKET|ゲーム|NINTENDO|PLAYSTATION|STEAM/i]
+];
+function guessCat(m){
+  if(S.rules[m])return S.rules[m];
+  for(const[c,re]of AUTO_RULES)if(re.test(m))return c;
+  return 'その他';
+}
+const spendIn=k=>S.spend.filter(x=>ym(x.date)===k);
+const spendTotal=k=>spendIn(k).reduce((a,x)=>a+x.amount,0);
+function byCat(k){const o={};for(const x of spendIn(k))o[x.cat]=(o[x.cat]||0)+x.amount;return Object.entries(o).sort((a,b)=>b[1]-a[1])}
+
+/* ショートカットが書いたファイルを読む。1行＝「日時<TAB>店名<TAB>金額<TAB>カード」。同じ行は二度入れない */
+function parsePayLog(text){
+  const out=[];
+  for(const raw of text.split(/\r?\n/)){
+    const line=raw.trim();if(!line)continue;
+    const p=line.split('\t');if(p.length<3)continue;
+    const dm=p[0].match(/(\d{4})[-\/年.](\d{1,2})[-\/月.](\d{1,2})/);if(!dm)continue;
+    const date=dm[1]+'-'+dm[2].padStart(2,'0')+'-'+dm[3].padStart(2,'0');
+    const tm=p[0].match(/(\d{1,2}):(\d{2})/),time=tm?tm[1].padStart(2,'0')+':'+tm[2]:'';
+    const merchant=p[1].trim()||'（店名なし）';
+    const amount=Math.round(parseFloat(p[2].replace(/[^0-9.]/g,'')));
+    if(!amount)continue;
+    out.push({key:line,date,time,merchant,amount,card:(p[3]||'').trim()});
+  }
+  return out;
+}
+function importPayLog(text){
+  const rows=parsePayLog(text);let n=0;
+  for(const r of rows){
+    if(S.seen[r.key])continue;
+    S.seen[r.key]=1;
+    S.spend.push({id:uid(),date:r.date,time:r.time,merchant:r.merchant,amount:r.amount,card:r.card,cat:guessCat(r.merchant),src:'applepay'});
+    n++;
+  }
+  save();
+  return {n,total:rows.length};
+}
+function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){toast('保存できませんでした')}}
+
+/* ---------- 計算 ---------- */
+const balance=gid=>S.tx.filter(t=>t.goalId===gid).reduce((a,t)=>a+t.amount,0);
+/* いまの額：積み立て（投資）は「最後の評価額＋その後に入れた額」。評価額がなければ入れた額 */
+const current=g=>g.kind==='invest'&&g.value!=null
+  ?g.value+S.tx.filter(t=>t.goalId===g.id&&t.date>g.valueDate).reduce((a,t)=>a+t.amount,0)
+  :balance(g.id);
+const totalAll=()=>S.goals.reduce((a,g)=>a+current(g),0);
+const ym=s=>s.slice(0,7);
+function monthNet(key){return S.tx.filter(t=>ym(t.date)===key).reduce((a,t)=>a+t.amount,0)}
+function daysLeft(deadline){
+  if(!deadline)return null;
+  const a=new Date(today()+'T00:00'),b=new Date(deadline+'T00:00');
+  return Math.round((b-a)/864e5);
+}
+/* 期限に間に合うための月あたりの額（100円単位で切り上げ） */
+function perMonth(g){
+  const rest=g.target-current(g),d=daysLeft(g.deadline);
+  if(rest<=0||d==null)return null;
+  if(d<=0)return {late:true,rest};
+  const months=Math.max(1,d/30.44);
+  return {late:false,amount:Math.ceil(rest/months/100)*100,rest};
+}
+/* 直近3か月の入金ペースから、達成見込みの月を出す */
+function forecast(g){
+  const rest=g.target-current(g);if(rest<=0)return null;
+  const now=new Date(),keys=[];
+  for(let i=1;i<=3;i++){const d=new Date(now.getFullYear(),now.getMonth()-i,1);keys.push(d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'))}
+  const pace=S.tx.filter(t=>t.goalId===g.id&&keys.includes(ym(t.date))).reduce((a,t)=>a+t.amount,0)/3;
+  if(pace<=0)return null;
+  const d=new Date(now.getFullYear(),now.getMonth()+Math.ceil(rest/pace),1);
+  return d.getFullYear()+'年'+(d.getMonth()+1)+'月ごろ';
+}
+const activeGoals=()=>S.goals.filter(g=>!g.archived);
+const curYM=()=>today().slice(0,7);
+const nextYM=k=>{const[y,m]=k.split('-').map(Number);const d=new Date(y,m,1);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')};
+
+/* 定期積立：開いたときに、設定日を過ぎた月の分を自動で記録する */
+function runAuto(){
+  let n=0;const t=today();
+  for(const g of S.goals){
+    if(g.archived||!g.auto||!g.auto.amount)continue;
+    let k=g.auto.last?nextYM(g.auto.last):curYM();
+    while(k<=curYM()){
+      const day=String(Math.min(g.auto.day,28)).padStart(2,'0'),date=k+'-'+day;
+      if(date>t)break;
+      S.tx.push({id:uid(),goalId:g.id,amount:g.auto.amount,date,memo:'定期積立',auto:true});
+      g.auto.last=k;n++;k=nextYM(k);
+    }
+  }
+  if(n){save();setTimeout(()=>toast(`定期積立を${n}件記録しました`),300)}
+}
+
+/* AIに相談：いまの状況をまとめた文を作る（個人を特定する情報は入れない） */
+function summaryText(q){
+  const L=[],now=curYM();
+  L.push('貯金アプリ「こつこつ」の記録です。これをもとに相談させてください。','');
+  L.push(`■ 全体（${today()}時点）`,`合計：${yen(totalAll())}`);
+  const ms=[];let k=now;for(let i=0;i<6;i++){ms.unshift(k);const[y,m]=k.split('-').map(Number);const d=new Date(y,m-2,1);k=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')}
+  L.push('月ごとの増減（直近6か月）：'+ms.map(m=>`${+m.slice(5)}月 ${sgn(monthNet(m))}`).join(' / '),'');
+  L.push('■ 目標');
+  for(const g of activeGoals()){
+    const pm=perMonth(g),fc=forecast(g);
+    let s=`・${g.name}（${g.kind==='invest'?'積み立て投資':'貯金'}）：${yen(current(g))} / 目標 ${yen(g.target)}`;
+    if(g.kind==='invest'){const p=balance(g.id);s+=`（入れた額 ${yen(p)}${g.value!=null?'、評価額 '+yen(g.value)+'（'+g.valueDate+'時点）':''}）`}
+    if(g.deadline)s+=`、期限 ${g.deadline}`;
+    if(pm&&!pm.late)s+=`、期限までに月 ${yen(pm.amount)} 必要`;
+    if(g.auto&&g.auto.amount)s+=`、定期積立 毎月${g.auto.day}日 ${yen(g.auto.amount)}`;
+    if(fc)s+=`、今のペースだと${fc}に達成`;
+    L.push(s);
+  }
+  const prev=(()=>{const[y,m]=now.split('-').map(Number);const d=new Date(y,m-2,1);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')})();
+  if(S.spend.length){
+    L.push('','■ 出費（Apple Pay などの記録）');
+    for(const k of[prev,now]){const c=byCat(k);if(!c.length)continue;
+      L.push(`${+k.slice(5)}月${k===now?'（'+(+today().slice(8))+'日まで）':''}：合計 ${yen(spendTotal(k))}（`+c.map(([n,v])=>`${n} ${yen(v)}`).join('、')+'）')}
+  }
+  L.push('','■ 相談したいこと',q,'');
+  L.push('※ お願い：日本に住む個人として、一般的な考え方や選択肢（先取り貯金、積立額の見直し、新NISAなどの制度の一般的な説明など）を、わかりやすく短めに教えてください。特定の銘柄や商品をすすめるのではなく、判断のポイントを示してください。');
+  return L.join('\n');
+}
+const ASK=[
+  ['今月をふり返る','今月の貯金をふり返って、よかった点と次の月に気をつけることを教えてください。'],
+  ['ペースを上げたい','期限に間に合うように、無理なく貯金のペースを上げる方法を教えてください。'],
+  ['積み立ての続け方','積み立て投資を続けるうえで、気をつけることや見直しのタイミングを教えてください。'],
+  ['出費を見直したい','出費の記録を見て、減らしやすそうなところと、貯金に回せそうな額の目安を教えてください。'],
+  ['貯金と積み立ての分け方','貯金（現金）と積み立て投資に、どんな割合で分けると考えやすいか、判断のポイントを教えてください。']
+];
+
+/* ---------- 画面 ---------- */
+let view={tab:'home',goal:null,month:null};
+function render(){
+  document.documentElement.dataset.theme=S.theme==='auto'?'':S.theme;
+  if(S.theme==='auto')delete document.documentElement.dataset.theme;
+  document.querySelectorAll('nav.tabs button').forEach(b=>b.setAttribute('aria-current',b.dataset.tab===view.tab?'page':'false'));
+  $('#fab').hidden=view.tab==='settings';
+  const app=$('#app');
+  if(view.tab==='home')app.innerHTML=view.goal?detailHTML(view.goal):homeHTML();
+  else if(view.tab==='spend')app.innerHTML=spendHTML();
+  else if(view.tab==='chart')app.innerHTML=chartHTML();
+  else app.innerHTML=settingsHTML();
+  window.scrollTo(0,0);
+}
+
+function homeHTML(){
+  const now=new Date(),key=today().slice(0,7);
+  const net=monthNet(key),gs=activeGoals();
+  let h=`<h1><span>こつこつ</span><span class="num">${now.getMonth()+1}月${now.getDate()}日</span></h1>
+  <section class="card total"><div style="font-size:13px;color:var(--sub)">いまの貯金</div>
+  <div class="big num">${yen(totalAll())}</div>
+  <div class="row num"><span>今月 <b class="${net>=0?'plus':'minus'}">${sgn(net)}</b></span><span>目標 ${gs.length}件</span></div>
+  ${gs.length?'<button class="btn ai" data-ai>💬 AIに相談する</button>':''}</section>`;
+  if(!gs.length)h+=`<div class="card empty">まだ目標がありません。<br>「＋」から最初の目標を作りましょう。</div>`;
+  for(const g of gs)h+=goalCard(g);
+  const arch=S.goals.filter(g=>g.archived);
+  if(arch.length){h+=`<h2>しまった目標</h2>`;for(const g of arch)h+=goalCard(g)}
+  return h;
+}
+function goalCard(g){
+  const b=current(g),p=g.target>0?Math.min(100,b/g.target*100):0,d=daysLeft(g.deadline),pm=perMonth(g);
+  let right='';
+  if(b>=g.target)right='<span class="badge">達成</span>';
+  else if(pm&&pm.late)right='期限を過ぎました';
+  else if(pm)right=`月 ${yen(pm.amount)}`;
+  return `<button class="card goal" data-open="${g.id}" style="--c:${g.color}">
+  <div class="top"><span class="ic">${g.icon}</span><span class="name">${esc(g.name)}</span>${g.kind==='invest'?'<span class="tag">積立</span>':''}<span class="pct num">${Math.floor(p)}%</span></div>
+  <div class="bar"><i style="width:${p}%"></i></div>
+  <div class="meta num"><span>${yen(b)} / ${yen(g.target)}</span><span>${d!=null&&b<g.target&&d>=0?'あと'+d+'日 · ':''}${right}</span></div></button>`;
+}
+
+function detailHTML(id){
+  const g=S.goals.find(x=>x.id===id);if(!g){view.goal=null;return homeHTML()}
+  const b=current(g),put=balance(id),rest=Math.max(0,g.target-b),p=g.target>0?Math.min(100,b/g.target*100):0,pm=perMonth(g),fc=forecast(g),d=daysLeft(g.deadline);
+  const inv=g.kind==='invest',gain=g.value!=null?b-put:null;
+  const tx=S.tx.filter(t=>t.goalId===id).sort((a,b)=>b.date.localeCompare(a.date)||b.id.localeCompare(a.id));
+  let h=`<button class="back" data-back>‹ ホーム</button>
+  <section class="card" style="--c:${g.color}">
+   <div class="goal" style="border:0"><div class="top"><span class="ic">${g.icon}</span><span class="name" style="font-size:18px">${esc(g.name)}</span>${b>=g.target?'<span class="badge">達成</span>':''}</div></div>
+   <div class="big num" style="font-size:28px;font-weight:700;margin-top:8px">${yen(b)} <span style="font-size:15px;color:var(--sub)">/ ${yen(g.target)}</span></div>
+   <div class="bar"><i style="width:${p}%"></i></div>
+   <div class="stats num">
+    <div><small>のこり</small><b>${yen(rest)}</b></div>
+    <div><small>期限</small><b>${g.deadline?md(g.deadline)+(d>=0?'（あと'+d+'日）':'（過ぎた）'):'なし'}</b></div>
+    <div><small>月あたり必要</small><b>${pm?(pm.late?'—':yen(pm.amount)):'—'}</b></div>
+    <div><small>今のペースだと</small><b style="font-size:15px">${b>=g.target?'達成ずみ':(fc||'—')}</b></div>
+    ${inv?`<div><small>入れた額（元本）</small><b>${yen(put)}</b></div>
+    <div><small>評価額${g.valueDate?'（'+md(g.valueDate)+'更新）':''}</small><b>${g.value!=null?yen(b):'未入力'}${gain!=null?` <span class="${gain>=0?'plus':'minus'}" style="font-size:13px">${sgn(gain)}</span>`:''}</b></div>`:''}
+   </div>
+   ${g.auto&&g.auto.amount?`<p class="hint">定期積立：毎月${g.auto.day}日に ${yen(g.auto.amount)} を自動で記録</p>`:''}
+   <div class="btns"><button class="btn pri" data-add="${id}">${inv?'積み立て・引き出し':'入金・出金'}</button>${inv?`<button class="btn" data-value="${id}">評価額を更新</button>`:''}</div>
+   <div class="btns" style="margin-top:8px"><button class="btn" data-edit="${id}">目標を編集</button></div>
+  </section>
+  <h2>記録（${tx.length}件）</h2><section class="card">`;
+  if(!tx.length)h+=`<div class="empty" style="padding:12px">まだ記録がありません</div>`;
+  else h+=`<ul class="list">`+tx.map(t=>`<li><span class="d num">${md(t.date)}</span><span class="m">${esc(t.memo)||'<span style="color:var(--sub)">—</span>'}</span><span class="a num ${t.amount>=0?'plus':'minus'}">${sgn(t.amount)}</span><button class="x" data-deltx="${t.id}" aria-label="削除">×</button></li>`).join('')+`</ul>`;
+  return h+`</section>`;
+}
+
+/* 出費：月ごとの合計、分類ごとの棒、日ごとの一覧 */
+function spendHTML(){
+  const k=view.month||curYM(),[y,m]=k.split('-').map(Number);
+  const tot=spendTotal(k),cats=byCat(k),max=Math.max(1,...cats.map(c=>c[1]));
+  const prevK=(()=>{const d=new Date(y,m-2,1);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')})();
+  const pt=spendTotal(prevK);
+  const items=spendIn(k).sort((a,b)=>(b.date+b.time).localeCompare(a.date+a.time));
+  let h=`<h1><span>出費</span><span class="mon"><button class="x" data-mon="${prevK}" aria-label="前の月">‹</button>${y}年${m}月<button class="x" data-mon="${nextYM(k)}" ${k>=curYM()?'disabled':''} aria-label="次の月">›</button></span></h1>
+  <section class="card total"><div style="font-size:13px;color:var(--sub)">${m}月の出費</div>
+   <div class="big num">${yen(tot)}</div>
+   <div class="row num"><span>先月 ${yen(pt)}</span><span>${items.length}件</span></div>
+   <button class="btn ai" data-pay>Apple Pay の記録を取り込む</button>
+   ${S.payAt?`<p class="hint" style="text-align:center">前回の取り込み：${esc(S.payAt)}</p>`:''}</section>`;
+  if(cats.length)h+=`<section class="card">${cats.map(([c,v])=>`<div class="cat"><span>${CAT_ICON[c]||'📦'} ${c}</span><span class="cbar"><i style="width:${v/max*100}%;background:${CAT_COLOR[c]||'var(--acc)'}"></i></span><b class="num">${yen(v)}</b></div>`).join('')}</section>`;
+  if(!items.length)h+=`<div class="card empty">この月の出費はまだありません。<br>「取り込む」か「＋」から入れられます。</div>`;
+  else{
+    h+=`<h2>記録</h2><section class="card"><ul class="list">`;
+    let last='';
+    for(const x of items){
+      if(x.date!==last){h+=`<li class="day">${md(x.date)}</li>`;last=x.date}
+      h+=`<li><span class="d num">${x.time||''}</span><span class="m">${CAT_ICON[x.cat]||'📦'} ${esc(x.merchant)}</span><span class="a num">${yen(x.amount)}</span><button class="x" data-sp="${x.id}" aria-label="編集">›</button></li>`;
+    }
+    h+=`</ul></section>`;
+  }
+  if(!S.payAt)h+=`<p class="hint" style="text-align:center">Apple Pay の自動記録は「設定」→「Apple Pay の自動記録」で準備します。</p>`;
+  return h;
+}
+
+/* 月末の貯金額（目標ごとの積み上げ棒）を直近12か月で表示 */
+function chartHTML(){
+  const now=new Date(),months=[];
+  for(let i=11;i>=0;i--){const d=new Date(now.getFullYear(),now.getMonth()-i,1);months.push(d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'))}
+  const gs=S.goals;
+  const data=months.map(m=>gs.map(g=>Math.max(0,S.tx.filter(t=>t.goalId===g.id&&ym(t.date)<=m).reduce((a,t)=>a+t.amount,0))));
+  const max=Math.max(1,...data.map(r=>r.reduce((a,b)=>a+b,0)));
+  const W=340,H=180,L=40,B=20,bw=(W-L)/12;
+  const nice=niceMax(max);
+  let svg=`<svg viewBox="0 0 ${W} ${H+B}" role="img" aria-label="月末の貯金額">`;
+  for(let i=0;i<=2;i++){const y=H-H*i/2;svg+=`<line x1="${L}" x2="${W}" y1="${y}" y2="${y}" stroke="var(--line)"/><text x="${L-4}" y="${y+4}" text-anchor="end">${short(nice*i/2)}</text>`}
+  data.forEach((r,i)=>{let y=H;r.forEach((v,j)=>{if(!v)return;const h=v/nice*H;y-=h;svg+=`<rect x="${L+i*bw+bw*.18}" y="${y}" width="${bw*.64}" height="${h}" fill="${gs[j].color}" rx="1.5"><title>${esc(gs[j].name)} ${yen(v)}</title></rect>`});
+    if(i%2===1||i===11)svg+=`<text x="${L+i*bw+bw/2}" y="${H+15}" text-anchor="middle">${+months[i].slice(5)}月</text>`});
+  svg+=`</svg>`;
+  const nets=months.slice(-6).map(m=>[m,monthNet(m)]);
+  return `<h1><span>グラフ</span></h1>
+  <section class="card chart"><div style="font-size:13px;color:var(--sub);margin-bottom:6px">月末の貯金（12か月）</div>${S.tx.length?svg:'<div class="empty">記録がたまると表示されます</div>'}
+  <div class="legend">${gs.map(g=>`<span style="--c:${g.color}">${esc(g.name)}</span>`).join('')}</div></section>
+  <h2>月ごとの増減</h2><section class="card"><ul class="list">${nets.reverse().map(([m,n])=>`<li><span class="m">${m.slice(0,4)}年${+m.slice(5)}月</span><span class="a num ${n>=0?'plus':'minus'}">${sgn(n)}</span></li>`).join('')}</ul></section>`;
+}
+function niceMax(v){const p=Math.pow(10,Math.floor(Math.log10(v)));for(const k of[1,2,2.5,5,10])if(k*p>=v)return k*p;return 10*p}
+function short(v){return v>=10000?(v/10000).toLocaleString('ja-JP',{maximumFractionDigits:1})+'万':Math.round(v).toLocaleString('ja-JP')}
+
+function settingsHTML(){
+  return `<h1><span>設定</span></h1>
+  <h2>表示</h2><section class="card"><div class="seg" id="theme">${[['auto','端末に合わせる'],['light','ライト'],['dark','ダーク']].map(([k,l])=>`<button type="button" data-theme="${k}" aria-pressed="${S.theme===k}">${l}</button>`).join('')}</div></section>
+  <h2>目標</h2><section class="card"><button class="btn" style="width:100%" data-newgoal>＋ 目標を作る</button></section>
+  <h2>Apple Pay の自動記録</h2><section class="card guide">
+   <p class="hint" style="margin-top:0">iPhone の「ショートカット」で、Apple Pay で払うたびに1行ずつファイルへ書き足します。アプリでは「出費」→「取り込む」でそのファイルを選ぶと、まだ入っていない分だけ入ります。</p>
+   <details><summary>準備のしかた（1回だけ）</summary><ol>
+    <li>「ショートカット」アプリ → 下の「オートメーション」→「＋」→「ウォレット」を選ぶ</li>
+    <li>カード（Apple Pay で使うものすべて）にチェック →「すぐに実行」を選んで「次へ」</li>
+    <li>「新規の空のオートメーション」→ アクション「テキスト」を追加し、次の順に入れる（<b>⇥</b> はタブ。キーボードで入らないときは下の「区切り用のタブをコピー」を使う）<br>
+     <code>現在の日付</code> ⇥ <code>加盟店</code> ⇥ <code>金額</code> ⇥ <code>カード</code><br>
+     ・「現在の日付」は変数から選び、日付のフォーマットを「カスタム」<code>yyyy-MM-dd HH:mm</code> にする<br>
+     ・「加盟店」「金額」「カード」は「ショートカットの入力」（取引）の項目から選ぶ</li>
+    <li>アクション「テキストファイルに追加」を追加 → ファイルのパスを <code>kotsukotsu-pay.txt</code>、「新しい行を作成」をオンにする（保存先は iCloud Drive の「Shortcuts」フォルダ）</li>
+    <li>一度 Apple Pay で払ったあと、「出費」→「取り込む」→ iCloud Drive の Shortcuts フォルダの <code>kotsukotsu-pay.txt</code> を選ぶ</li>
+   </ol>
+   <div class="btns"><button class="btn" data-tab-copy>区切り用のタブをコピー</button></div>
+   <p class="hint">ファイルは消さなくて大丈夫です。同じ行は二度入りません。現金や口座引き落としは記録されないので、必要なら「出費」の「＋」で入れてください。</p></details></section>
+  <h2>バックアップ</h2><section class="card">
+   <p class="hint" style="margin-top:0">データはこの端末の中だけにあります。機種変更の前や、ときどきコピーして残しておくと安心です。</p>
+   <div class="btns"><button class="btn" data-copy>データをコピー</button><button class="btn" data-csv>CSVで保存</button></div>
+   <label for="imp">貼り付けて読み込む</label><textarea id="imp" rows="3" placeholder="コピーしたデータを貼り付け"></textarea>
+   <div class="btns"><button class="btn" data-import>読み込む（いまのデータは置き換え）</button></div></section>
+  <h2>そのほか</h2><section class="card"><div class="btns" style="margin-top:0"><button class="btn warn" data-wipe>すべてのデータを消す</button></div>
+   <p class="hint">目標 ${S.goals.length}件 · 記録 ${S.tx.length}件 · 出費 ${S.spend.length}件</p></section>`;
+}
+
+/* ---------- 入力シート ---------- */
+function openSheet(html){const s=$('#sheet');s.innerHTML=html;s.hidden=false}
+function closeSheet(){$('#sheet').hidden=true;$('#sheet').innerHTML=''}
+
+function txSheet(gid){
+  const gs=activeGoals();
+  if(!gs.length)return goalSheet();
+  let sel=gid||gs[0].id,sign=1;
+  openSheet(`<form id="txf"><h3>記録する</h3>
+   <div class="seg"><button type="button" data-sign="1" aria-pressed="true">入金</button><button type="button" class="out" data-sign="-1" aria-pressed="false">出金</button></div>
+   <label for="amt">金額</label><input id="amt" class="amount num" inputmode="numeric" pattern="[0-9,]*" placeholder="0" autocomplete="off" required>
+   <div class="quick">${[1000,5000,10000,30000].map(v=>`<button type="button" data-q="${v}">+${short(v)}</button>`).join('')}</div>
+   <label>目標</label><div class="chips">${gs.map(g=>`<button type="button" data-g="${g.id}" aria-pressed="${g.id===sel}">${g.icon} ${esc(g.name)}</button>`).join('')}</div>
+   <div class="two"><div><label for="dt">日付</label><input id="dt" type="date" value="${today()}" required></div>
+   <div><label for="memo">メモ</label><input id="memo" placeholder="例：給料から" maxlength="40"></div></div>
+   <div class="btns"><button type="button" class="btn" data-close>やめる</button><button class="btn pri">記録する</button></div></form>`);
+  const f=$('#txf'),amt=$('#amt');
+  setTimeout(()=>amt.focus(),50);
+  amt.addEventListener('input',()=>{const n=amt.value.replace(/[^0-9]/g,'');amt.value=n?(+n).toLocaleString('ja-JP'):''});
+  f.addEventListener('click',e=>{
+    const t=e.target.closest('button');if(!t)return;
+    if(t.dataset.sign){sign=+t.dataset.sign;f.querySelectorAll('[data-sign]').forEach(b=>b.setAttribute('aria-pressed',b===t))}
+    if(t.dataset.g){sel=t.dataset.g;f.querySelectorAll('[data-g]').forEach(b=>b.setAttribute('aria-pressed',b===t))}
+    if(t.dataset.q){const n=(+amt.value.replace(/[^0-9]/g,'')||0)+(+t.dataset.q);amt.value=n.toLocaleString('ja-JP')}
+  });
+  f.addEventListener('submit',e=>{
+    e.preventDefault();
+    const n=+amt.value.replace(/[^0-9]/g,'');if(!n){amt.focus();return}
+    const g=S.goals.find(x=>x.id===sel),before=balance(sel);
+    S.tx.push({id:uid(),goalId:sel,amount:sign*n,date:$('#dt').value||today(),memo:$('#memo').value.trim()});
+    save();closeSheet();
+    const after=balance(sel);
+    if(before<g.target&&after>=g.target)toast(`🎉 「${g.name}」を達成しました！`);
+    else if(before<g.target/2&&after>=g.target/2)toast(`半分まで来ました（${g.name}）`);
+    else toast(sign>0?`${yen(n)} 入金しました`:`${yen(n)} 出金しました`);
+    render();
+  });
+}
+
+function goalSheet(id){
+  const g=id?S.goals.find(x=>x.id===id):{name:'',target:'',deadline:'',icon:ICONS[0],color:COLORS[S.goals.length%COLORS.length]};
+  let icon=g.icon,color=g.color,kind=g.kind||'save';
+  const au=g.auto||{amount:0,day:25};
+  openSheet(`<form id="gf"><h3>${id?'目標を編集':'目標を作る'}</h3>
+   <div class="seg"><button type="button" data-k="save" aria-pressed="${kind==='save'}">貯金</button><button type="button" data-k="invest" aria-pressed="${kind==='invest'}">積み立て（投資）</button></div>
+   <label for="gn">名前</label><input id="gn" value="${esc(g.name)}" placeholder="例：沖縄旅行" maxlength="24" required>
+   <div class="two"><div><label for="gt">目標金額</label><input id="gt" class="num" inputmode="numeric" value="${g.target?(+g.target).toLocaleString('ja-JP'):''}" placeholder="150,000" required></div>
+   <div><label for="gd">期限（なくてもよい）</label><input id="gd" type="date" value="${g.deadline||''}"></div></div>
+   <div class="two"><div><label for="aa">定期積立（毎月・なしは空）</label><input id="aa" class="num" inputmode="numeric" value="${au.amount?au.amount.toLocaleString('ja-JP'):''}" placeholder="例：20,000"></div>
+   <div><label for="ad">積立日</label><select id="ad">${Array.from({length:28},(_,i)=>`<option value="${i+1}" ${au.day===i+1?'selected':''}>${i+1}日</option>`).join('')}</select></div></div>
+   <p class="hint">設定すると、毎月この日を過ぎてアプリを開いたときに自動で記録します。</p>
+   <label>アイコン</label><div class="chips icons">${ICONS.map(i=>`<button type="button" data-i="${i}" aria-pressed="${i===icon}">${i}</button>`).join('')}</div>
+   <label>色</label><div class="chips colors">${COLORS.map(c=>`<button type="button" data-c="${c}" style="--c:${c}" aria-pressed="${c===color}" aria-label="色"></button>`).join('')}</div>
+   ${id?`<div class="btns"><button type="button" class="btn" data-arch>${g.archived?'ホームに戻す':'しまう（達成・中止）'}</button><button type="button" class="btn warn" data-delg>削除</button></div>`:''}
+   <div class="btns"><button type="button" class="btn" data-close>やめる</button><button class="btn pri">${id?'保存':'作る'}</button></div></form>`);
+  const f=$('#gf'),gt=$('#gt');
+  if(!id)setTimeout(()=>$('#gn')?.focus(),50);
+  for(const el of [gt,$('#aa')])el.addEventListener('input',()=>{const n=el.value.replace(/[^0-9]/g,'');el.value=n?(+n).toLocaleString('ja-JP'):''});
+  f.addEventListener('click',e=>{
+    const t=e.target.closest('button');if(!t)return;
+    if(t.dataset.k){kind=t.dataset.k;f.querySelectorAll('[data-k]').forEach(b=>b.setAttribute('aria-pressed',b===t))}
+    if(t.dataset.i){icon=t.dataset.i;f.querySelectorAll('[data-i]').forEach(b=>b.setAttribute('aria-pressed',b===t))}
+    if(t.dataset.c){color=t.dataset.c;f.querySelectorAll('[data-c]').forEach(b=>b.setAttribute('aria-pressed',b===t))}
+    if('arch' in t.dataset){g.archived=!g.archived;save();closeSheet();view.goal=null;render()}
+    if('delg' in t.dataset){const n=S.tx.filter(x=>x.goalId===id).length;
+      if(confirm(`「${g.name}」と記録${n}件を削除します。元に戻せません。`)){S.goals=S.goals.filter(x=>x.id!==id);S.tx=S.tx.filter(x=>x.goalId!==id);save();closeSheet();view.goal=null;render()}}
+  });
+  f.addEventListener('submit',e=>{
+    e.preventDefault();
+    const target=+gt.value.replace(/[^0-9]/g,'');if(!target){gt.focus();return}
+    const amount=+$('#aa').value.replace(/[^0-9]/g,'')||0,day=+$('#ad').value;
+    /* 定期積立は「次に来る積立日」から始める（今月の日がまだ先なら今月分から） */
+    const startLast=()=>{const t=today();return t.slice(8)>=String(day).padStart(2,'0')?curYM():(()=>{const[y,m]=curYM().split('-').map(Number);const d=new Date(y,m-2,1);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')})()};
+    const prev=g.auto||{};
+    const auto=amount?{amount,day,last:(prev.amount&&prev.day===day)?prev.last:startLast()}:null;
+    const v={name:$('#gn').value.trim(),target,deadline:$('#gd').value,icon,color,kind,auto};
+    if(id)Object.assign(g,v);else S.goals.push({id:uid(),created:today(),archived:false,...v});
+    save();closeSheet();runAuto();if(view.tab!=='home'){view.tab='home';view.goal=null}render();
+    toast(id?'保存しました':'目標を作りました');
+  });
+}
+
+/* 出費を手で入れる・直す（現金払いなど）。分類を直すと、同じ店は次からその分類になる */
+function spendSheet(id){
+  const x=id?S.spend.find(v=>v.id===id):{amount:'',merchant:'',date:today(),time:'',cat:'食費'};
+  let cat=x.cat;
+  openSheet(`<form id="sf"><h3>${id?'出費を直す':'出費を入れる'}</h3>
+   <label for="sa">金額</label><input id="sa" class="amount num" inputmode="numeric" value="${x.amount?x.amount.toLocaleString('ja-JP'):''}" placeholder="0" required>
+   <div class="two"><div><label for="sm">お店・内容</label><input id="sm" value="${esc(x.merchant)}" placeholder="例：ランチ" maxlength="40"></div>
+   <div><label for="sd">日付</label><input id="sd" type="date" value="${x.date}" required></div></div>
+   <label>分類</label><div class="chips">${CATS.map(([c,i])=>`<button type="button" data-cat="${c}" aria-pressed="${c===cat}">${i} ${c}</button>`).join('')}</div>
+   ${id&&x.src==='applepay'?`<p class="hint">Apple Pay から取り込み${x.card?'（'+esc(x.card)+'）':''}。分類を直すと「${esc(x.merchant)}」は次からその分類になります。</p>`:''}
+   ${id?`<div class="btns"><button type="button" class="btn warn" data-delsp>この出費を削除</button></div>`:''}
+   <div class="btns"><button type="button" class="btn" data-close>やめる</button><button class="btn pri">${id?'保存':'入れる'}</button></div></form>`);
+  const f=$('#sf'),sa=$('#sa');if(!id)setTimeout(()=>sa.focus(),50);
+  sa.addEventListener('input',()=>{const n=sa.value.replace(/[^0-9]/g,'');sa.value=n?(+n).toLocaleString('ja-JP'):''});
+  f.addEventListener('click',e=>{const t=e.target.closest('button');if(!t)return;
+    if(t.dataset.cat){cat=t.dataset.cat;f.querySelectorAll('[data-cat]').forEach(b=>b.setAttribute('aria-pressed',b===t))}
+    if('delsp' in t.dataset&&confirm('この出費を削除しますか？')){S.spend=S.spend.filter(v=>v.id!==id);save();closeSheet();render()}});
+  f.addEventListener('submit',e=>{e.preventDefault();
+    const n=+sa.value.replace(/[^0-9]/g,'');if(!n){sa.focus();return}
+    const v={amount:n,merchant:$('#sm').value.trim()||'（メモなし）',date:$('#sd').value||today(),cat};
+    if(id){
+      if(cat!==x.cat&&x.src==='applepay'){S.rules[x.merchant]=cat;for(const o of S.spend)if(o.src==='applepay'&&o.merchant===x.merchant)o.cat=cat}
+      Object.assign(x,v);
+    }else S.spend.push({id:uid(),time:'',src:'manual',...v});
+    save();closeSheet();view.month=ym(v.date);render();toast(id?'保存しました':'入れました');
+  });
+}
+
+/* 積み立て（投資）の評価額を入れる */
+function valueSheet(id){
+  const g=S.goals.find(x=>x.id===id);
+  openSheet(`<form id="vf"><h3>評価額を更新（${esc(g.name)}）</h3>
+   <p class="hint" style="margin-top:0">証券会社のアプリに出ている、いまの評価額を入れてください。入れた額は ${yen(balance(id))} です。</p>
+   <label for="va">評価額</label><input id="va" class="amount num" inputmode="numeric" value="${g.value!=null?g.value.toLocaleString('ja-JP'):''}" placeholder="0" required>
+   <div class="btns"><button type="button" class="btn" data-close>やめる</button><button class="btn pri">保存</button></div></form>`);
+  const va=$('#va');setTimeout(()=>va.focus(),50);
+  va.addEventListener('input',()=>{const n=va.value.replace(/[^0-9]/g,'');va.value=n?(+n).toLocaleString('ja-JP'):''});
+  $('#vf').addEventListener('submit',e=>{e.preventDefault();const n=va.value.replace(/[^0-9]/g,'');if(!n)return;
+    g.value=+n;g.valueDate=today();save();closeSheet();render();toast('評価額を更新しました')});
+}
+
+/* AIに相談：状況のまとめをコピーして Claude を開く */
+function aiSheet(){
+  openSheet(`<form id="af"><h3>AIに相談する</h3>
+   <p class="hint" style="margin-top:0">いまの貯金の状況と質問をコピーして、Claude を開きます。貼り付けて送ってください。</p>
+   <label>よくある相談</label><div class="chips">${ASK.map(([l],i)=>`<button type="button" data-ask="${i}" aria-pressed="${i===0}">${l}</button>`).join('')}</div>
+   <label for="aq">相談したいこと</label><textarea id="aq" rows="3">${ASK[0][1]}</textarea>
+   <details style="margin-top:10px"><summary class="hint" style="cursor:pointer">送る内容を見る</summary><pre id="ap" style="white-space:pre-wrap;font-size:12px;color:var(--sub);background:var(--bg);border-radius:8px;padding:8px;max-height:200px;overflow:auto"></pre></details>
+   <p class="hint">AIの答えは一般的な情報です。投資の判断は自分で、必要なら専門家にも相談してください。</p>
+   <div class="btns"><button type="button" class="btn" data-close>やめる</button><button class="btn pri">コピーして Claude を開く</button></div></form>`);
+  const f=$('#af'),aq=$('#aq'),ap=$('#ap');
+  const upd=()=>ap.textContent=summaryText(aq.value.trim());upd();
+  aq.addEventListener('input',upd);
+  f.addEventListener('click',e=>{const t=e.target.closest('[data-ask]');if(!t)return;aq.value=ASK[+t.dataset.ask][1];upd();
+    f.querySelectorAll('[data-ask]').forEach(b=>b.setAttribute('aria-pressed',b===t))});
+  f.addEventListener('submit',async e=>{e.preventDefault();const s=summaryText(aq.value.trim());
+    try{await navigator.clipboard.writeText(s)}catch(_){ap.parentElement.open=true;toast('内容を長押しでコピーしてください');return}
+    closeSheet();toast('コピーしました。Claude に貼り付けてください');
+    setTimeout(()=>{location.href='https://claude.ai/new'},600);
+  });
+}
+
+/* ---------- 操作 ---------- */
+let tt;
+function toast(msg){const t=$('#toast');t.textContent=msg;t.hidden=false;clearTimeout(tt);tt=setTimeout(()=>t.hidden=true,2400)}
+
+document.querySelector('nav.tabs').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;view={tab:b.dataset.tab,goal:null,month:null};render()});
+$('#fab').addEventListener('click',()=>view.tab==='spend'?spendSheet():txSheet(view.goal));
+$('#payfile').addEventListener('change',async e=>{
+  const file=e.target.files[0];e.target.value='';if(!file)return;
+  const r=importPayLog(await file.text());
+  const d=new Date();S.payAt=`${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;save();
+  render();toast(r.total?(r.n?`${r.n}件を取り込みました`:'新しい記録はありませんでした'):'記録が見つかりませんでした（ファイルを確認）');
+});
+$('#sheet').addEventListener('click',e=>{if(e.target.id==='sheet'||e.target.closest('[data-close]'))closeSheet()});
+$('#app').addEventListener('click',async e=>{
+  const t=e.target.closest('button');if(!t)return;const d=t.dataset;
+  if(d.open){view.goal=d.open;render()}
+  else if('back' in d){view.goal=null;render()}
+  else if(d.add)txSheet(d.add);
+  else if(d.edit)goalSheet(d.edit);
+  else if(d.value)valueSheet(d.value);
+  else if('ai' in d)aiSheet();
+  else if('pay' in d)$('#payfile').click();
+  else if(d.sp)spendSheet(d.sp);
+  else if(d.mon){view.month=d.mon;render()}
+  else if(d.deltx){const x=S.tx.find(v=>v.id===d.deltx);if(x&&confirm(`${md(x.date)} ${sgn(x.amount)} の記録を削除しますか？`)){S.tx=S.tx.filter(v=>v.id!==d.deltx);save();render()}}
+  else if('newgoal' in d)goalSheet();
+  else if(d.theme){S.theme=d.theme;save();render()}
+  else if('copy' in d){const s=JSON.stringify(S);try{await navigator.clipboard.writeText(s);toast('コピーしました')}catch(_){$('#imp').value=s;$('#imp').select();toast('下の欄からコピーしてください')}}
+  else if('csv' in d){
+    const rows=[['種類','日付','目標・分類','金額','メモ・お店']]
+      .concat(S.tx.map(t=>['貯金',t.date,(S.goals.find(g=>g.id===t.goalId)||{}).name||'',t.amount,t.memo]))
+      .concat(S.spend.map(x=>['出費',x.date,x.cat,-x.amount,x.merchant]))
+      .sort((a,b)=>a[1].localeCompare(b[1])||a[0].localeCompare(b[0]));
+    const csv='﻿'+rows.map(r=>r.map(c=>'"'+String(c).replace(/"/g,'""')+'"').join(',')).join('\r\n');
+    const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download='kotsukotsu-'+today()+'.csv';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+  }
+  else if('import' in d){
+    try{const s=JSON.parse($('#imp').value);if(!Array.isArray(s.goals)||!Array.isArray(s.tx))throw 0;
+      if(confirm(`目標${s.goals.length}件・記録${s.tx.length}件・出費${(s.spend||[]).length}件を読み込みます。いまのデータは置き換わります。`)){S=fill({v:1,theme:'auto',...s});save();render();toast('読み込みました')}}
+    catch(_){toast('データの形が違います')}
+  }
+  else if('wipe' in d){if(confirm('すべての目標・記録・出費を消します。元に戻せません。')){S=fill({v:1,goals:[],tx:[],theme:S.theme});save();render()}}
+  else if('tabCopy' in d){try{await navigator.clipboard.writeText('\t');toast('タブをコピーしました。テキストの間に貼り付けてください')}catch(_){toast('コピーできませんでした')}}
+});
+
+runAuto();
+render();
+document.addEventListener('visibilitychange',()=>{if(!document.hidden){const n=S.tx.length;runAuto();if(S.tx.length!==n)render()}});
+if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('sw.js');
+</script>
+</body></html>
