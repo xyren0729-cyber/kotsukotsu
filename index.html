@@ -187,6 +187,8 @@ function load(){
 function fill(s){
   s.spend=s.spend||[];s.rules=s.rules||{};s.seen=s.seen||{};
   s.budget=s.budget||{total:0,cats:{}};s.fixed=s.fixed||[];s.dismiss=s.dismiss||{};
+  /* 銀行口座の残高（手で入れる）。最初はゆうちょと三菱UFJ */
+  if(!s.accounts)s.accounts=[{id:'yucho',name:'ゆうちょ銀行',icon:'📮',bal:null,at:null,hist:[]},{id:'mufg',name:'三菱UFJ銀行',icon:'🏦',bal:null,at:null,hist:[]}];
   return s;
 }
 
@@ -360,6 +362,8 @@ function summaryText(q){
   L.push('貯金アプリ「こつこつ」の記録です。これをもとに相談させてください。','');
   L.push(`■ 全体（${today()}時点）`,`合計：${yen(totalAll())}`);
   const ms=[];let k=now;for(let i=0;i<6;i++){ms.unshift(k);const[y,m]=k.split('-').map(Number);const d=new Date(y,m-2,1);k=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')}
+  const ac=S.accounts.filter(x=>x.bal!=null);
+  if(ac.length)L.push('銀行口座の残高：'+ac.map(x=>`${x.name} ${yen(x.bal)}（${x.at}時点）`).join('、')+`、合計 ${yen(bankTotal())}`);
   L.push('月ごとの増減（直近6か月）：'+ms.map(m=>`${+m.slice(5)}月 ${sgn(monthNet(m))}`).join(' / '),'');
   L.push('■ 目標');
   for(const g of activeGoals()){
@@ -421,11 +425,24 @@ function homeHTML(){
   <div class="big num">${yen(totalAll())}</div>
   <div class="row"><span>今月 <b class="num ${net>=0?'plus':'minus'}">${sgn(net)}</b></span>${st>=2?`<span>🔥 ${st}か月連続プラス</span>`:`<span>目標 ${gs.length}件</span>`}</div>
   ${gs.length?'<button class="btn ai" data-ai>💬 AIに相談する</button>':''}</section>`;
+  h+=bankHTML();
   if(!gs.length)h+=`<div class="card empty">まだ目標がありません。<br>「＋」から最初の目標を作りましょう。</div>`;
   for(const g of gs)h+=goalCard(g);
   const arch=S.goals.filter(g=>g.archived);
   if(arch.length){h+=`<h2>しまった目標</h2>`;for(const g of arch)h+=goalCard(g)}
   return h;
+}
+/* 口座の残高：合計と、目標に入れた貯金を除いた「自由に使える」分 */
+function bankTotal(){return S.accounts.reduce((a,x)=>a+(x.bal||0),0)}
+function bankHTML(){
+  if(!S.accounts.length)return '';
+  const has=S.accounts.some(x=>x.bal!=null),tot=bankTotal();
+  const saved=activeGoals().filter(g=>g.kind!=='invest').reduce((a,g)=>a+current(g),0);
+  const li=S.accounts.map(x=>{
+    const h=x.hist||[],prev=h.length>1?h[h.length-2].v:null;
+    return `<li><span class="m">${x.icon} ${esc(x.name)}<br><small style="color:var(--sub)">${x.at?md(x.at)+' 時点':'未入力'}</small></span><span class="a num" style="text-align:right">${x.bal!=null?yen(x.bal):'—'}${prev!=null?`<br><small class="${x.bal-prev>=0?'plus':'minus'}">前回比 ${sgn(x.bal-prev)}</small>`:''}</span><button class="x" data-bank="${x.id}" aria-label="${esc(x.name)}の残高を更新">›</button></li>`}).join('');
+  return `<h2>口座の残高</h2><section class="card"><ul class="list">${li}</ul>
+  ${has?`<div style="margin-top:8px;font-size:13px;color:var(--sub);line-height:1.7"><div>合計 <b class="num" style="color:var(--ink)">${yen(tot)}</b></div>${saved?`<div>目標に入れた貯金を除くと <b class="num" style="color:var(--ink)">${yen(tot-saved)}</b></div>`:''}</div>`:'<p class="hint" style="margin:6px 0 0">› を押して、銀行アプリに出ている残高を入れてください。月1回くらい更新すると、増え方がわかります。</p>'}</section>`;
 }
 /* お知らせ：起きたときだけ、ホームの上に1行ずつ（最大3つ）。×で今月は出さない */
 function noticesHTML(){
@@ -443,6 +460,10 @@ function noticesHTML(){
     if(old&&!off('val:'+g.id+':'+cur))note('val:'+g.id+':'+cur,`「${esc(g.name)}」の評価額を更新しましょう${g.valueDate?'（前回 '+md(g.valueDate)+'）':''}`,`<button class="nb" data-value="${g.id}">更新</button>`);
   }
   if(day>=daysInMonth(cur)-2&&activeGoals().length&&!off('eom:'+cur))note('eom:'+cur,'月末です。今月のふり返りを AI に相談しませんか','<button class="nb" data-ai>相談</button>');
+  for(const x of S.accounts){
+    if(x.bal==null)continue;
+    if((new Date(today())-new Date(x.at))/864e5>30&&!off('bank:'+x.id+':'+cur))note('bank:'+x.id+':'+cur,`${esc(x.name)}の残高を更新しましょう（前回 ${md(x.at)}）`,`<button class="nb" data-bank="${x.id}">更新</button>`);
+  }
   const bkOld=!S.backupAt||(new Date(today())-new Date(S.backupAt))/864e5>30;
   if(bkOld&&S.tx.length+S.spend.length>=5&&!off('bk:'+cur))note('bk:'+cur,`バックアップをファイルに保存しましょう（前回：${S.backupAt?md(S.backupAt):'なし'}）`,'<button class="nb" data-backup>保存</button>');
   return N.slice(0,3).join('');
@@ -593,6 +614,10 @@ function settingsHTML(){
   <h2>表示</h2><section class="card"><div class="seg" id="theme">${[['auto','端末に合わせる'],['light','ライト'],['dark','ダーク']].map(([k,l])=>`<button type="button" data-theme="${k}" aria-pressed="${S.theme===k}">${l}</button>`).join('')}</div></section>
   <h2>目標</h2><section class="card"><button class="btn" style="width:100%" data-newgoal>＋ 目標を作る</button>
    <label for="payday">給料日（先取り貯金のお知らせ・なしは空）</label><select id="payday"><option value="">なし</option>${Array.from({length:31},(_,i)=>`<option value="${i+1}" ${S.payday===i+1?'selected':''}>${i+1}日</option>`).join('')}</select></section>
+  <h2>口座（残高を手で入れる）</h2><section class="card">
+   ${S.accounts.length?`<ul class="list">${S.accounts.map(x=>`<li><span class="m">${x.icon} ${esc(x.name)}</span><span class="a num">${x.bal!=null?yen(x.bal):'—'}</span><button class="x" data-bank="${x.id}" aria-label="編集">›</button></li>`).join('')}</ul>`:''}
+   <p class="hint">銀行の残高は自動では読めないので、銀行アプリを見て入れます。前回から30日たつとホームでお知らせします。</p>
+   <div class="btns"><button class="btn" data-bank="new">＋ 口座を追加</button></div></section>
   <h2>予算（毎月）</h2><section class="card">
    <label for="bt" style="margin-top:0">出費の合計</label><input id="bt" class="num" inputmode="numeric" value="${S.budget.total?S.budget.total.toLocaleString('ja-JP'):''}" placeholder="例：80,000（なしは空）">
    <details style="margin-top:10px"><summary class="hint" style="cursor:pointer">分類ごとの予算（入れたものだけ使う）</summary>
@@ -805,6 +830,26 @@ function valueSheet(id){
     g.value=+n;g.valueDate=today();save();closeSheet();render();toast('評価額を更新しました')});
 }
 
+function bankSheet(id){
+  const x=id==='new'?null:S.accounts.find(a=>a.id===id);
+  openSheet(`<form id="bf"><h3>${x?esc(x.name)+'の残高':'口座を追加'}</h3>
+   ${x?`<p class="hint" style="margin-top:0">銀行アプリに出ている、いまの残高を入れてください。${x.at?'前回：'+md(x.at)+' '+yen(x.bal):''}</p>`:`<label for="bn">口座の名前</label><input id="bn" placeholder="例：楽天銀行" required>`}
+   <label for="ba">残高</label><input id="ba" class="amount num" inputmode="numeric" value="${x&&x.bal!=null?x.bal.toLocaleString('ja-JP'):''}" placeholder="0"${x?' required':''}>
+   ${x&&x.hist&&x.hist.length>1?`<details style="margin-top:10px"><summary class="hint" style="cursor:pointer">これまでの残高</summary><ul class="list">${x.hist.slice().reverse().slice(0,12).map(r=>`<li><span class="m">${r.d}</span><span class="a num">${yen(r.v)}</span></li>`).join('')}</ul></details>`:''}
+   ${x?'<div class="btns"><button type="button" class="btn" data-rename>名前を変える</button><button type="button" class="btn warn" data-delbank>口座を消す</button></div>':''}
+   <div class="btns"><button type="button" class="btn" data-close>やめる</button><button class="btn pri">保存</button></div></form>`);
+  const ba=$('#ba');setTimeout(()=>(x?ba:$('#bn')).focus(),50);
+  ba.addEventListener('input',()=>{const n=ba.value.replace(/[^0-9]/g,'');ba.value=n?(+n).toLocaleString('ja-JP'):''});
+  $('#bf').addEventListener('click',e=>{
+    if(e.target.closest('[data-rename]')){const n=prompt('口座の名前',x.name);if(n&&n.trim()){x.name=n.trim();save();closeSheet();render()}}
+    if(e.target.closest('[data-delbank]')&&confirm(`${x.name}と、その残高の記録を消します。`)){S.accounts=S.accounts.filter(a=>a!==x);save();closeSheet();render()}
+  });
+  $('#bf').addEventListener('submit',e=>{e.preventDefault();const n=ba.value.replace(/[^0-9]/g,'');
+    let a=x;if(!a){const nm=$('#bn').value.trim();if(!nm)return;a={id:uid(),name:nm,icon:'🏦',bal:null,at:null,hist:[]};S.accounts.push(a)}
+    if(n!==''){a.bal=+n;a.at=today();a.hist=(a.hist||[]).filter(r=>r.d!==a.at);a.hist.push({d:a.at,v:a.bal})}
+    save();closeSheet();render();toast(x?'残高を更新しました':'口座を追加しました')});
+}
+
 /* AIに相談：状況のまとめをコピーして Claude を開く */
 function aiSheet(){
   openSheet(`<form id="af"><h3>AIに相談する</h3>
@@ -870,6 +915,7 @@ $('#app').addEventListener('click',async e=>{
   if('restore' in d){$('#restorefile').click();return}
   if(d.leftover){txSheet(null,+d.leftover,`${+curYM().slice(5)}月の予算の余り`);return}
   if(d.fixed){fixedSheet(d.fixed);return}
+  if(d.bank){bankSheet(d.bank);return}
   if('savebudget' in d){
     const num=v=>+String(v).replace(/[^0-9]/g,'')||0;
     S.budget.total=num($('#bt').value);S.budget.cats={};
