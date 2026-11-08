@@ -540,6 +540,7 @@ function summaryText(q){
     const waste=spendIn(now).concat(spendIn(prev)).filter(x=>x.feel==='bad');
     if(waste.length)L.push(`「ムダだった」と記録した出費（先月〜今月）：${waste.length}件、${yen(waste.reduce((a,x)=>a+x.amount,0))}（`+waste.slice(0,8).map(x=>x.merchant).join('、')+'）');
   }
+  if(S.spend.length){const I=insights();if(I.length)L.push('','■ 見直しポイント（アプリがルールで自動計算したもの）',...I.slice(0,6).map(o=>`・${o.title.replace(/<[^>]+>/g,'')}：${o.detail.replace(/<[^>]+>/g,'')}${o.effect?`（${o.effect.replace(/<[^>]+>/g,'')}）`:''}`))}
   if(S.aiNote&&S.aiNote.text)L.push('',`■ 前回（${S.aiNote.date}）の相談で AI から言われたこと（要点）`,S.aiNote.text.slice(0,600));
   L.push('','■ 相談したいこと',q,'');
   L.push('※ お願い：日本に住む個人として、一般的な考え方や選択肢（先取り貯金、積立額の見直し、新NISAなどの制度の一般的な説明など）を、わかりやすく短めに教えてください。特定の銘柄や商品をすすめるのではなく、判断のポイントを示してください。');
@@ -606,6 +607,7 @@ function noticesHTML(){
   const note=(key,text,btn)=>N.push(`<div class="note"><span>${text}</span>${btn||''}<button class="x" data-dismiss="${key}" aria-label="閉じる">×</button></div>`);
   if(S.cards.length&&S.accounts.some(a=>a.bal!=null)){const P=projection(45),w=Object.entries(P.mins).find(([,m])=>m.v<0);
     if(w&&!off('short:'+w[0]+':'+w[1].d)){const a=S.accounts.find(x=>x.id===w[0]);note('short:'+w[0]+':'+w[1].d,`⚠️ ${md(w[1].d)}ごろ ${esc(a.name)}の残高が足りなくなりそうです（見込み ${yen(w[1].v)}）`,'<button class="nb" data-tabgo="chart">見る</button>')}}
+  if(S.spend.length&&(S.budget.total||Object.keys(S.budget.cats||{}).length)&&!off('bov:'+cur)){const b=insights().find(o=>o.kind==='budget');if(b)note('bov:'+cur,b.title,'<button class="nb" data-tabgo="spend">見る</button>')}
   const stP=monthNet(prevYM(cur))>0?streak():0;
   if(day>=20&&stP>=1&&monthNet(cur)<=0&&!off('st:'+cur))note('st:'+cur,`今月はまだプラスになっていません。🔥${stP}か月連続を守りましょう（あと${daysInMonth(cur)-day+1}日）`,'<button class="nb" data-addtx>記録</button>');
   if(S.payday&&day>=S.payday&&!off('pay:'+cur))note('pay:'+cur,'給料日です。先取り貯金はしましたか？','<button class="nb" data-addany>記録</button>');
@@ -694,7 +696,7 @@ function spendHTML(){
    <button class="btn ai" data-pay>Apple Pay の記録を取り込む</button>
    <button class="btn" style="width:100%;margin-top:8px" data-csvin>銀行の明細（CSV）を取り込む</button>
    ${S.payAt?`<p class="hint" style="text-align:center">前回の取り込み：${esc(S.payAt)}</p>`:''}</section>`;
-  if(isCur)h+=cardsHTML()+wishHTML();
+  if(isCur)h+=(S.spend.length?insightsHTML():'')+cardsHTML()+wishHTML();
   if(cats.length)h+=`<section class="card">${cats.map(([c,v])=>{const cb=S.budget.cats[c],l=level(v,cb);
     return `<div class="cat"><span>${CAT_ICON[c]||'📦'} ${c}</span><span class="cbar"><i style="width:${cb?Math.min(100,v/cb*100):v/max*100}%;background:${l==='over'?'var(--out)':l==='warn'?'var(--done)':CAT_COLOR[c]||'var(--acc)'}"></i></span><b class="num ${l==='over'?'minus':''}">${yen(v)}${cb?`<small class="cb"> / ${short(cb)}</small>`:''}</b></div>`}).join('')}</section>`;
   const rc=recurring();
@@ -1448,12 +1450,102 @@ function projHTML(){
    <p class="hint">入れた残高に、その日より後の予定（カードの引き落とし${S.salary&&S.salary.amount?'・給料':''}${S.pre&&S.pre.amount?'・先取り貯金':''}・口座払いの固定費）を足し引きした目安です。${S.salary&&S.salary.amount?'':'設定で手取りの給料を入れると、給料日の入金も入ります。'}現金や口座からの細かい出費は入っていません。</p></section>`;
 }
 
+/* ---------- 見直しポイント：記録した数字をルールで比べて、減らせそうな所を見つける（AI なし） ---------- */
+const WD='日月火水木金土';
+const varSpend=()=>S.spend.filter(x=>x.src!=='fixed');
+/* 減らした分が目標にどう効くか */
+function effectLine(save){
+  if(!(save>=300))return '';
+  const yr=Math.round(save*12),g=activeGoals().filter(g=>current(g)<g.target).sort((a,b)=>(b.deadline?1:0)-(a.deadline?1:0))[0];
+  if(!g)return `月 ${yen(save)} 減らすと、年 ${yen(yr)} 貯まります`;
+  const rest=g.target-current(g),p=pace();
+  if(p>0){const before=rest/p,after=rest/(p+save),m=Math.round(before-after);
+    if(m>=1)return `月 ${yen(save)} 減らすと年 ${yen(yr)}。「${esc(g.name)}」に約${m}か月早く届きます`}
+  if(yr>=rest)return `月 ${yen(save)} 減らすと年 ${yen(yr)}。「${esc(g.name)}」のあと ${yen(rest)} を${Math.max(1,Math.ceil(rest/save))}か月で埋められます`;
+  return `月 ${yen(save)} 減らすと年 ${yen(yr)}（「${esc(g.name)}」のあと ${yen(rest)} の${Math.round(yr/rest*100)}%）`;
+}
+function insights(){
+  const out=[],t=today(),k=curYM(),d=+t.slice(8),dim=daysInMonth(k),scale=dim/Math.max(d,1);
+  const V=varSpend(),cur=V.filter(x=>ym(x.date)===k);
+  const prevKs=[1,2,3].map(i=>addM(k,-i)).filter(p=>V.some(x=>ym(x.date)===p));
+  const add=(o)=>out.push(o);
+  /* 1. いつもより多い分類（過去の同じ日までの平均と比べる） */
+  if(prevKs.length){
+    const cats=new Set(cur.map(x=>x.cat));
+    for(const c of cats){
+      const now=cur.filter(x=>x.cat===c).reduce((a,x)=>a+x.amount,0);
+      const avg=prevKs.reduce((a,p)=>a+V.filter(x=>ym(x.date)===p&&x.cat===c&&+x.date.slice(8)<=d).reduce((s,x)=>s+x.amount,0),0)/prevKs.length;
+      /* 減らせる額は「いつもとの差」だけ（月初に何倍もして大きく見せない） */
+      if(now-avg>=2000&&(avg===0?now>=5000:now/avg>=1.3)){const save=Math.round(now-avg);
+        add({icon:CAT_ICON[c]||'📦',title:`${c}がいつもより +${yen(now-avg)}${avg?`（+${Math.round((now/avg-1)*100)}%）`:''}`,detail:`今月${d}日まで ${yen(now)}／過去${prevKs.length}か月の同じ日までの平均 ${yen(avg)}`,save,score:save,kind:'cat'})}
+    }
+  }
+  /* 2. 小さな出費の積み重ね（1,000円以下・直近30日） */
+  const s30=(()=>{const x=new Date(t);x.setDate(x.getDate()-30);return fmtD(x)})(),small=V.filter(x=>x.amount<=1000&&x.date>s30);
+  if(small.length>=5){const sum=small.reduce((a,x)=>a+x.amount,0),by={};small.forEach(x=>{by[x.cat]=by[x.cat]||{n:0,v:0};by[x.cat].n++;by[x.cat].v+=x.amount});
+    const top=Object.entries(by).sort((a,b)=>b[1].v-a[1].v)[0];
+    add({icon:'🪙',title:`1,000円以下の出費 30日で${small.length}回・${yen(sum)} → 年に約${short(sum*12)}円`,detail:`いちばん多いのは${top[0]}（${top[1].n}回・${yen(top[1].v)}）。回数を半分にすると`,save:Math.round(sum/2),score:sum/2,kind:'small'})}
+  /* 3. 毎月の支払い（サブスクなど、見つけたもの）の見直し */
+  const rc=recurring().filter(r=>r.auto||r.cat==='サブスク');
+  if(rc.length){const m=rc.reduce((a,r)=>a+r.amount,0),cheap=rc.reduce((a,r)=>r.amount<a.amount?r:a);
+    add({icon:'🔁',title:`サブスクなど毎月の支払い ${rc.length}件・月 ${yen(m)}（年 ${short(m*12)}円）`,detail:`最近使っていないものはありませんか？ ${rc.slice(0,5).map(r=>`${esc(r.name)} 年${short(r.amount*12)}円`).join('・')}`,
+      save:cheap.amount,saveNote:`たとえば「${esc(cheap.name)}」をやめると`,score:m*.3,kind:'subs'})}
+  /* 4. 「ムダだった」の傾向（直近90日） */
+  const since=(()=>{const x=new Date(t);x.setDate(x.getDate()-90);return fmtD(x)})();
+  const bad=V.filter(x=>x.feel==='bad'&&x.date>=since);
+  if(bad.length>=3){const sum=bad.reduce((a,x)=>a+x.amount,0),cnt=(f)=>{const o={};bad.forEach(x=>{const key=f(x);if(key!=null)o[key]=(o[key]||0)+x.amount});return Object.entries(o).sort((a,b)=>b[1]-a[1])[0]};
+    const c=cnt(x=>x.cat),w=cnt(x=>WD[new Date(x.date).getDay()]+'曜'),h=cnt(x=>x.time?(+x.time.slice(0,2)>=22||+x.time.slice(0,2)<5?'深夜':+x.time.slice(0,2)>=17?'夜':+x.time.slice(0,2)>=11?'昼':'朝'):null),m=cnt(x=>x.merchant);
+    const pct=v=>Math.round(v/sum*100)+'%';
+    add({icon:'💸',title:`「ムダだった」${bad.length}件・${yen(sum)}（90日）`,detail:[c&&`${c[0]}が${pct(c[1])}`,w&&`${w[0]}が${pct(w[1])}`,h&&`${h[0]}が${pct(h[1])}`,m&&`いちばんは「${esc(m[0])}」`].filter(Boolean).join('・'),save:Math.round(sum/3),score:sum/3,kind:'bad'})}
+  /* 5. 予算を超えそうな分類（月の5日目から） */
+  if(d>=5&&S.budget){
+    /* 月末の見込み＝いまの額＋直近30日の1日平均×残りの日数＋これから来る今月の固定費（1回の大きな出費に引っぱられにくい） */
+    const s30b=(()=>{const x=new Date(t);x.setDate(x.getDate()-30);return fmtD(x)})(),left=dim-d;
+    const daily=c=>V.filter(x=>x.date>s30b&&x.date<=t&&(!c||x.cat===c)).reduce((a,x)=>a+x.amount,0)/30;
+    const fxLeft=c=>S.fixed.filter(f=>(!c||f.cat===c)&&f.day>d&&(f.last||'')<k).reduce((a,f)=>a+f.amount,0);
+    const tot=cur.reduce((a,x)=>a+x.amount,0)+S.spend.filter(x=>x.src==='fixed'&&ym(x.date)===k).reduce((a,x)=>a+x.amount,0),pj=Math.round(tot+daily()*left+fxLeft());
+    if(S.budget.total&&tot>S.budget.total)add({icon:'⚠️',title:`今月の出費が予算を ${yen(tot-S.budget.total)} 超えています`,detail:`いま ${yen(tot)}／予算 ${yen(S.budget.total)}。残り${dim-d+1}日は、できるだけ使わない日を増やしましょう`,save:0,score:(tot-S.budget.total)*2,kind:'budget'});
+    else if(S.budget.total&&pj>S.budget.total)add({icon:'⚠️',title:`このペースだと今月の出費が予算を ${yen(pj-S.budget.total)} 超えます`,detail:`いま ${yen(tot)}・月末の見込み ${yen(pj)}／予算 ${yen(S.budget.total)}。残り${dim-d+1}日は1日 ${yen(Math.max(0,(S.budget.total-tot)/(dim-d+1)))} まで`,save:0,score:(pj-S.budget.total)*1.5,kind:'budget'});
+    for(const[c,b]of Object.entries(S.budget.cats||{})){const v=cur.filter(x=>x.cat===c).reduce((a,x)=>a+x.amount,0)+S.spend.filter(x=>x.src==='fixed'&&x.cat===c&&ym(x.date)===k).reduce((a,x)=>a+x.amount,0),p=Math.round(v+daily(c)*left+fxLeft(c));
+      if(v>b)add({icon:CAT_ICON[c]||'📦',title:`${c}が予算を ${yen(v-b)} 超えています`,detail:`いま ${yen(v)}／予算 ${yen(b)}`,save:0,score:(v-b)*1.5,kind:'budget'});
+      else if(p>b)add({icon:CAT_ICON[c]||'📦',title:`${c}が月末に予算を ${yen(p-b)} 超えそう`,detail:`いま ${yen(v)}・見込み ${yen(p)}／予算 ${yen(b)}`,save:0,score:(p-b)*1.2,kind:'budget'})}
+  }
+  /* 6. 使いがちな時間帯・曜日（直近60日） */
+  const s60=(()=>{const x=new Date(t);x.setDate(x.getDate()-60);return fmtD(x)})(),R=V.filter(x=>x.date>=s60);
+  const timed=R.filter(x=>x.time);
+  if(timed.length>=10){const night=timed.filter(x=>+x.time.slice(0,2)>=22||+x.time.slice(0,2)<5),nv=night.reduce((a,x)=>a+x.amount,0),tv=timed.reduce((a,x)=>a+x.amount,0);
+    if(night.length/timed.length>=.2)add({icon:'🌙',title:`夜10時以降の出費が ${Math.round(night.length/timed.length*100)}%（60日で${night.length}回・${yen(nv)}）`,detail:'夜はつい使いがち。寝る前はアプリを閉じる、コンビニに寄らない道で帰る、など',save:Math.round(nv/2/2),score:nv/4,kind:'time'})}
+  if(R.length>=10){const days={};R.forEach(x=>days[x.date]=(days[x.date]||0)+x.amount);
+    let we=0,wd=0;for(let x=new Date(s60);fmtD(x)<t;x.setDate(x.getDate()+1)){const v=days[fmtD(x)]||0;if(x.getDay()===0||x.getDay()===6)we+=v;else wd+=v}
+    const weA=we/(60*2/7),wdA=wd/(60*5/7);
+    if(wdA>0&&weA/wdA>=1.8)add({icon:'📅',title:`週末は平日の ${(weA/wdA).toFixed(1)}倍 使っています`,detail:`1日あたり 週末 ${yen(weA)}・平日 ${yen(wdA)}（60日）。週末の予定を先に決めておくと使いすぎにくい`,save:Math.round((weA-wdA)*8/4),score:(weA-wdA)*2,kind:'time'})}
+  /* 7. 一回の大きな出費（その分類のふだんの3倍以上・5,000円以上） */
+  for(const x of cur){
+    const hist=V.filter(y=>y.cat===x.cat&&y.date<k+'-01'&&y.date>=addM(k,-3)+'-01').map(y=>y.amount).sort((a,b)=>a-b);
+    if(hist.length<5||x.amount<5000)continue;const med=hist[Math.floor(hist.length/2)];
+    if(x.amount>=med*3)add({icon:'🔎',title:`大きな出費：${esc(x.merchant)} ${yen(x.amount)}`,detail:`${md(x.date)}・${x.cat}のふだん（${yen(med)}くらい）の${Math.round(x.amount/med)}倍。必要なものだったか、ふり返ってみましょう`,save:0,score:x.amount*.15,kind:'big'});
+  }
+  /* 8. 効果を目標とつなげる */
+  for(const o of out){const e=o.save?effectLine(o.save):'';o.effect=e?(o.saveNote?o.saveNote+e.replace(/^月 ¥[\d,]+ 減らすと、?/,''):e):''}
+  return out.sort((a,b)=>b.score-a.score);
+}
+function insightsHTML(){
+  const I=insights();
+  const row=o=>`<li style="align-items:flex-start"><span style="font-size:20px;line-height:1.2">${o.icon}</span><span class="m" style="white-space:normal"><b>${o.title}</b><br><small style="color:var(--sub)">${o.detail}</small>${o.effect?`<br><small style="color:var(--acc);font-weight:700">→ ${o.effect}</small>`:''}</span></li>`;
+  return `<h2>🔍 見直しポイント</h2><section class="card">
+   ${I.length?`<ul class="list">${I.slice(0,5).map(row).join('')}</ul>${I.length>5?`<details><summary class="hint" style="cursor:pointer">ほかに ${I.length-5}件</summary><ul class="list">${I.slice(5).map(row).join('')}</ul></details>`:''}`
+     :'<p class="hint" style="margin:0">いまは目立つ見直しポイントはありません。出費の記録が1〜2か月分たまると、いつもとの違いを見つけて出します。</p>'}
+   <p class="hint">記録した数字を決まったルールで比べた結果です（AI は使っていません）。効果の大きい順に並べています。</p>
+   <button class="btn ai" data-aiask="3">💬 AIに詳しく相談</button></section>`;
+}
+
 /* AIに相談：状況のまとめをコピーして Claude を開く */
-function aiSheet(){
+function aiSheet(ai){
+  ai=ai||0;
   openSheet(`<form id="af"><h3>AIに相談する</h3>
    <p class="hint" style="margin-top:0">いまの貯金の状況と質問をコピーして、Claude を開きます。貼り付けて送ってください。</p>
-   <label>よくある相談</label><div class="chips">${ASK.map(([l],i)=>`<button type="button" data-ask="${i}" aria-pressed="${i===0}">${l}</button>`).join('')}</div>
-   <label for="aq">相談したいこと</label><textarea id="aq" rows="3">${ASK[0][1]}</textarea>
+   <label>よくある相談</label><div class="chips">${ASK.map(([l],i)=>`<button type="button" data-ask="${i}" aria-pressed="${i===ai}">${l}</button>`).join('')}</div>
+   <label for="aq">相談したいこと</label><textarea id="aq" rows="3">${ASK[ai][1]}</textarea>
    <details style="margin-top:10px"><summary class="hint" style="cursor:pointer">送る内容を見る</summary><pre id="ap" style="white-space:pre-wrap;font-size:12px;color:var(--sub);background:var(--bg);border-radius:8px;padding:8px;max-height:200px;overflow:auto"></pre></details>
    <p class="hint">AIの答えは一般的な情報です。投資の判断は自分で、必要なら専門家にも相談してください。</p>
    <div class="btns"><button type="button" class="btn" data-close>やめる</button><button class="btn pri">コピーして Claude を開く</button></div>
@@ -1525,6 +1617,7 @@ $('#app').addEventListener('click',async e=>{
   if('gaman' in d){gamanSheet();return}
   if('wish' in d){wishSheet();return}
   if(d.card){cardSheet(d.card);return}
+  if(d.aiask){aiSheet(+d.aiask);return}
   if(d.billfix){S.billFix=S.billFix||{};const cur=S.billFix[d.billfix];const[cid,k]=d.billfix.split('|');const c=S.cards.find(x=>x.id===cid);
     const v=prompt(`${c?c.name:''} ${+k.slice(5)}月締めの請求額（カード会社のアプリの額。空にすると見込みに戻す）`,cur!=null?cur:'');if(v===null)return;
     const n=v.replace(/[^0-9]/g,'');if(n)S.billFix[d.billfix]=+n;else delete S.billFix[d.billfix];save();render();toast(n?'請求額を入れました':'見込みに戻しました');return}
