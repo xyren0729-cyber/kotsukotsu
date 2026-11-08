@@ -269,7 +269,7 @@ function parsePayLog(text){
   const out=[];
   for(const raw of text.split(/\r?\n/)){
     const line=raw.trim();if(!line)continue;
-    const p=line.split('\t');if(p.length<3)continue;
+    const p=line.split('\t');if(p.length<3||p[1].trim()==='残高')continue;
     const dm=p[0].match(/(\d{4})[-\/年.](\d{1,2})[-\/月.](\d{1,2})/);if(!dm)continue;
     const date=dm[1]+'-'+dm[2].padStart(2,'0')+'-'+dm[3].padStart(2,'0');
     const tm=p[0].match(/(\d{1,2}):(\d{2})/),time=tm?tm[1].padStart(2,'0')+':'+tm[2]:'';
@@ -288,8 +288,34 @@ function importPayLog(text){
     S.spend.push({id:uid(),date:r.date,time:r.time,merchant:r.merchant,amount:r.amount,card:r.card,cat:guessCat(r.merchant),src:'applepay'});
     n++;
   }
+  const bal=parseBalLog(text).filter(r=>!S.seen[r.key]);
   save();
-  return {n,total:rows.length};
+  return {n,total:rows.length+bal.length,bal};
+}
+/* 残高のスクショ：ショートカットが「日時 ⇥ 残高 ⇥ 画面の文字（1行）」を書き足す。口座と金額を推し量り、確認画面で直せる */
+const ACCT_KW={yucho:/ゆうちょ|ゆうちよ|郵便|JP\s?BANK/i,mufg:/三菱|MUFG|UFJ/i};
+function acctOf(t){
+  for(const a of S.accounts){const kw=ACCT_KW[a.id]||new RegExp(a.name.replace(/銀行$/,'').replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'i');if(kw.test(t))return a.id}
+  return null;
+}
+function readAmount(t){
+  t=t.replace(/[０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0)).replace(/[，､]/g,',').replace(/￥/g,'¥');
+  const re=/[¥]\s*(\d{1,3}(?:,\d{3})+|\d+)|(\d{1,3}(?:,\d{3})+|\d+)\s*円/g,c=[];let m;
+  while((m=re.exec(t)))c.push({i:m.index,v:+(m[1]||m[2]).replace(/,/g,'')});
+  if(!c.length)return null;
+  const k=t.search(/残高|お預り|預金|お預かり/);
+  const after=k>=0?c.find(x=>x.i>k):null;
+  return (after||c.reduce((a,b)=>b.v>a.v?b:a)).v;
+}
+function parseBalLog(text){
+  const out=[];
+  for(const raw of text.split(/\r?\n/)){
+    const p=raw.trim().split('\t');if(p.length<3||p[1].trim()!=='残高')continue;
+    const dm=p[0].match(/(\d{4})[-\/年.](\d{1,2})[-\/月.](\d{1,2})/);if(!dm)continue;
+    const body=p.slice(2).join(' ');
+    out.push({key:raw.trim(),date:dm[1]+'-'+dm[2].padStart(2,'0')+'-'+dm[3].padStart(2,'0'),acct:acctOf(body),v:readAmount(body)});
+  }
+  return out;
 }
 function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){toast('保存できませんでした')}}
 
@@ -441,7 +467,7 @@ function bankHTML(){
   const li=S.accounts.map(x=>{
     const h=x.hist||[],prev=h.length>1?h[h.length-2].v:null;
     return `<li><span class="m">${x.icon} ${esc(x.name)}<br><small style="color:var(--sub)">${x.at?md(x.at)+' 時点':'未入力'}</small></span><span class="a num" style="text-align:right">${x.bal!=null?yen(x.bal):'—'}${prev!=null?`<br><small class="${x.bal-prev>=0?'plus':'minus'}">前回比 ${sgn(x.bal-prev)}</small>`:''}</span><button class="x" data-bank="${x.id}" aria-label="${esc(x.name)}の残高を更新">›</button></li>`}).join('');
-  return `<h2>口座の残高</h2><section class="card"><ul class="list">${li}</ul>
+  return `<h2 style="display:flex;justify-content:space-between;align-items:center">口座の残高<button class="nb" data-bankall>残高を入れる</button></h2><section class="card"><ul class="list">${li}</ul>
   ${has?`<div style="margin-top:8px;font-size:13px;color:var(--sub);line-height:1.7"><div>合計 <b class="num" style="color:var(--ink)">${yen(tot)}</b></div>${saved?`<div>目標に入れた貯金を除くと <b class="num" style="color:var(--ink)">${yen(tot-saved)}</b></div>`:''}</div>`:'<p class="hint" style="margin:6px 0 0">› を押して、銀行アプリに出ている残高を入れてください。月1回くらい更新すると、増え方がわかります。</p>'}</section>`;
 }
 /* お知らせ：起きたときだけ、ホームの上に1行ずつ（最大3つ）。×で今月は出さない */
@@ -460,10 +486,8 @@ function noticesHTML(){
     if(old&&!off('val:'+g.id+':'+cur))note('val:'+g.id+':'+cur,`「${esc(g.name)}」の評価額を更新しましょう${g.valueDate?'（前回 '+md(g.valueDate)+'）':''}`,`<button class="nb" data-value="${g.id}">更新</button>`);
   }
   if(day>=daysInMonth(cur)-2&&activeGoals().length&&!off('eom:'+cur))note('eom:'+cur,'月末です。今月のふり返りを AI に相談しませんか','<button class="nb" data-ai>相談</button>');
-  for(const x of S.accounts){
-    if(x.bal==null)continue;
-    if((new Date(today())-new Date(x.at))/864e5>30&&!off('bank:'+x.id+':'+cur))note('bank:'+x.id+':'+cur,`${esc(x.name)}の残高を更新しましょう（前回 ${md(x.at)}）`,`<button class="nb" data-bank="${x.id}">更新</button>`);
-  }
+  const oldAc=S.accounts.filter(x=>x.bal!=null&&(new Date(today())-new Date(x.at))/864e5>30);
+  if(oldAc.length&&!off('bank:'+cur))note('bank:'+cur,`口座の残高を更新しましょう（${oldAc.map(x=>esc(x.name.replace(/銀行$/,''))+' '+md(x.at)).join('、')}）`,'<button class="nb" data-bankall>更新</button>');
   const bkOld=!S.backupAt||(new Date(today())-new Date(S.backupAt))/864e5>30;
   if(bkOld&&S.tx.length+S.spend.length>=5&&!off('bk:'+cur))note('bk:'+cur,`バックアップをファイルに保存しましょう（前回：${S.backupAt?md(S.backupAt):'なし'}）`,'<button class="nb" data-backup>保存</button>');
   return N.slice(0,3).join('');
@@ -617,7 +641,21 @@ function settingsHTML(){
   <h2>口座（残高を手で入れる）</h2><section class="card">
    ${S.accounts.length?`<ul class="list">${S.accounts.map(x=>`<li><span class="m">${x.icon} ${esc(x.name)}</span><span class="a num">${x.bal!=null?yen(x.bal):'—'}</span><button class="x" data-bank="${x.id}" aria-label="編集">›</button></li>`).join('')}</ul>`:''}
    <p class="hint">銀行の残高は自動では読めないので、銀行アプリを見て入れます。前回から30日たつとホームでお知らせします。</p>
-   <div class="btns"><button class="btn" data-bank="new">＋ 口座を追加</button></div></section>
+   <div class="btns"><button class="btn" data-bank="new">＋ 口座を追加</button></div>
+   <div class="guide" style="margin-top:12px"><details><summary>背面タップで残高を記録する（いちばん楽な方法）</summary>
+   <p class="hint">銀行アプリで残高が出ている画面のまま、iPhone の背面を2回たたくと、画面の文字を読んで Apple Pay と同じファイルに書き足します。あとで「残高を入れる」→「スクショの記録を取り込む」で入ります（Apple Pay の取り込みでも一緒に入ります）。</p><ol>
+    <li>「ショートカット」アプリ →「＋」で新しいショートカットを作り、名前を「残高を記録」にする</li>
+    <li>アクション「スクリーンショットを撮る」</li>
+    <li>アクション「画像からテキストを抽出」（入力はスクリーンショット）</li>
+    <li>アクション「テキストを分割」：区切りを「改行」に</li>
+    <li>アクション「テキストを結合」：区切りを「スペース」に（読んだ文字を1行にまとめる）</li>
+    <li>アクション「テキスト」：<code>現在の日付</code> ⇥ <code>残高</code> ⇥ <code>結合されたテキスト</code>（日付のフォーマットは <code>yyyy-MM-dd HH:mm</code>、⇥ は下のボタンでコピーしたタブ。「残高」はそのまま文字で入れる）</li>
+    <li>アクション「テキストファイルに追加」：パス <code>kotsukotsu-pay.txt</code>、「新しい行を作成」オン（Apple Pay と同じファイル）</li>
+    <li>アクション「通知を表示」：「残高を記録しました」</li>
+    <li>iPhone の「設定」→「アクセシビリティ」→「タッチ」→「背面タップ」→「ダブルタップ」→「残高を記録」を選ぶ</li>
+   </ol>
+   <div class="btns"><button class="btn" data-tab-copy>区切り用のタブをコピー</button></div>
+   <p class="hint">口座は画面の「ゆうちょ」「三菱UFJ」などの文字で見分け、金額は「残高」の近くの「◯円」「¥◯」を拾います。取り込むときに確認画面が出るので、違っていたら直せます。銀行アプリによってはスクショが黒くなり読めないことがあります。</p></details></div></section>
   <h2>予算（毎月）</h2><section class="card">
    <label for="bt" style="margin-top:0">出費の合計</label><input id="bt" class="num" inputmode="numeric" value="${S.budget.total?S.budget.total.toLocaleString('ja-JP'):''}" placeholder="例：80,000（なしは空）">
    <details style="margin-top:10px"><summary class="hint" style="cursor:pointer">分類ごとの予算（入れたものだけ使う）</summary>
@@ -830,6 +868,32 @@ function valueSheet(id){
     g.value=+n;g.valueDate=today();save();closeSheet();render();toast('評価額を更新しました')});
 }
 
+/* 残高をまとめて入れる。reads（スクショから読んだもの）があれば先に入れておく */
+function setBal(a,v,d){a.bal=v;a.at=d;a.hist=(a.hist||[]).filter(r=>r.d!==d);a.hist.push({d,v});a.hist.sort((x,y)=>x.d.localeCompare(y.d));if(a.hist[a.hist.length-1].d!==d){a.bal=a.hist[a.hist.length-1].v;a.at=a.hist[a.hist.length-1].d}}
+function bankAllSheet(reads){
+  reads=reads||[];const pre={};
+  for(const r of reads.filter(r=>r.acct&&r.v!=null))pre[r.acct]=r;           // 口座がわかったもの（同じ口座は後の方）
+  for(const r of reads.filter(r=>!r.acct&&r.v!=null)){const a=S.accounts.find(a=>!pre[a.id]);if(a)pre[a.id]={...r,guess:1}}
+  const miss=reads.filter(r=>r.v==null).length;
+  openSheet(`<form id="baf"><h3>残高を入れる</h3>
+   ${reads.length?`<p class="hint" style="margin-top:0">スクショから読んだ額を入れました。違っていたら直して「保存」してください。${miss?`（${miss}件は金額が読めませんでした）`:''}</p>`
+     :`<p class="hint" style="margin-top:0">銀行アプリの残高を入れて「保存」。空の口座はそのままです。</p>`}
+   ${S.accounts.map((a,i)=>{const r=pre[a.id];return `<label for="bal-${a.id}">${a.icon} ${esc(a.name)}${r?` <small style="color:var(--acc)">${r.guess?'口座を推定・':''}${md(r.date)}のスクショ</small>`:a.at?` <small style="color:var(--sub)">前回 ${md(a.at)} ${yen(a.bal)}</small>`:''}</label>
+     <input id="bal-${a.id}" data-acct="${a.id}" data-date="${r?r.date:''}" class="num" inputmode="numeric" enterkeyhint="${i<S.accounts.length-1?'next':'done'}" value="${r?r.v.toLocaleString('ja-JP'):''}" placeholder="${a.bal!=null?a.bal.toLocaleString('ja-JP'):'0'}">`}).join('')}
+   <div class="btns"><button type="button" class="btn" data-close>やめる</button><button class="btn pri">保存</button></div>
+   ${reads.length?'':'<div class="btns"><button type="button" class="btn" data-shot>スクショの記録を取り込む</button></div>'}</form>`);
+  const ins=[...document.querySelectorAll('#baf [data-acct]')];
+  if(!reads.length)setTimeout(()=>ins[0]&&ins[0].focus(),50);
+  ins.forEach((el,i)=>{
+    el.addEventListener('input',()=>{const n=el.value.replace(/[^0-9]/g,'');el.value=n?(+n).toLocaleString('ja-JP'):''});
+    el.addEventListener('keydown',e=>{if(e.key==='Enter'&&i<ins.length-1){e.preventDefault();ins[i+1].focus()}});
+  });
+  $('#baf').addEventListener('click',e=>{if(e.target.closest('[data-shot]')){closeSheet();$('#payfile').click()}});
+  $('#baf').addEventListener('submit',e=>{e.preventDefault();let n=0;
+    for(const el of ins){const v=el.value.replace(/[^0-9]/g,'');if(v==='')continue;setBal(S.accounts.find(a=>a.id===el.dataset.acct),+v,el.dataset.date||today());n++}
+    for(const r of reads)S.seen[r.key]=1;
+    save();closeSheet();render();toast(n?`${n}口座の残高を保存しました`:'保存する残高がありませんでした')});
+}
 function bankSheet(id){
   const x=id==='new'?null:S.accounts.find(a=>a.id===id);
   openSheet(`<form id="bf"><h3>${x?esc(x.name)+'の残高':'口座を追加'}</h3>
@@ -846,7 +910,7 @@ function bankSheet(id){
   });
   $('#bf').addEventListener('submit',e=>{e.preventDefault();const n=ba.value.replace(/[^0-9]/g,'');
     let a=x;if(!a){const nm=$('#bn').value.trim();if(!nm)return;a={id:uid(),name:nm,icon:'🏦',bal:null,at:null,hist:[]};S.accounts.push(a)}
-    if(n!==''){a.bal=+n;a.at=today();a.hist=(a.hist||[]).filter(r=>r.d!==a.at);a.hist.push({d:a.at,v:a.bal})}
+    if(n!=='')setBal(a,+n,today());
     save();closeSheet();render();toast(x?'残高を更新しました':'口座を追加しました')});
 }
 
@@ -887,7 +951,9 @@ $('#payfile').addEventListener('change',async e=>{
   const file=e.target.files[0];e.target.value='';if(!file)return;
   const r=importPayLog(await file.text());
   const d=new Date();S.payAt=`${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;save();
-  render();toast(r.total?(r.n?`${r.n}件を取り込みました`:'新しい記録はありませんでした'):'記録が見つかりませんでした（ファイルを確認）');
+  render();
+  if(r.bal.length){bankAllSheet(r.bal);if(r.n)toast(`出費 ${r.n}件を取り込みました`);return}
+  toast(r.total?(r.n?`${r.n}件を取り込みました`:'新しい記録はありませんでした'):'記録が見つかりませんでした（ファイルを確認）');
 });
 $('#sheet').addEventListener('click',e=>{if(e.target.id==='sheet'||e.target.closest('[data-close]'))closeSheet()});
 $('#restorefile').addEventListener('change',async e=>{
@@ -916,6 +982,7 @@ $('#app').addEventListener('click',async e=>{
   if(d.leftover){txSheet(null,+d.leftover,`${+curYM().slice(5)}月の予算の余り`);return}
   if(d.fixed){fixedSheet(d.fixed);return}
   if(d.bank){bankSheet(d.bank);return}
+  if('bankall' in d){bankAllSheet();return}
   if('savebudget' in d){
     const num=v=>+String(v).replace(/[^0-9]/g,'')||0;
     S.budget.total=num($('#bt').value);S.budget.cats={};
