@@ -394,7 +394,7 @@ function parsePayLog(text){
   const out=[];
   for(const raw of text.split(/\r?\n/)){
     const line=raw.trim();if(!line)continue;
-    const p=line.split('\t');if(p.length<3||p[1].trim()==='残高')continue;
+    const p=line.split('\t');if(p.length<3||p[1].trim()==='残高'||p[1].trim()==='欲しい')continue;
     const dm=p[0].match(/(\d{4})[-\/年.](\d{1,2})[-\/月.](\d{1,2})/);if(!dm)continue;
     const date=dm[1]+'-'+dm[2].padStart(2,'0')+'-'+dm[3].padStart(2,'0');
     const tm=p[0].match(/(\d{1,2}):(\d{2})/),time=tm?tm[1].padStart(2,'0')+':'+tm[2]:'';
@@ -414,8 +414,15 @@ function importPayLog(text){
     n++;
   }
   const bal=parseBalLog(text).filter(r=>!S.seen[r.key]);
+  /* 共有シートから送った欲しいもの：日時 ⇥ 欲しい ⇥ 名前 ⇥ 値段 ⇥ URL */
+  let wn=0;
+  for(const raw of text.split(/\r?\n/)){const line=raw.trim(),p=line.split('\t');if(p.length<3||p[1].trim()!=='欲しい'||S.seen[line])continue;
+    const dm=p[0].match(/(\d{4})[-\/年.](\d{1,2})[-\/月.](\d{1,2})/),date=dm?dm[1]+'-'+dm[2].padStart(2,'0')+'-'+dm[3].padStart(2,'0'):today();
+    const url=(p.slice(2).find(s=>/^https?:\/\//.test(s.trim()))||'').trim(),price=+String(p[3]||'').replace(/[^0-9]/g,'')||0;
+    let name=(p[2]||'').trim();if(/^https?:\/\//.test(name))name='';name=name.replace(/\s*[|｜-]\s*ZOZOTOWN.*$/i,'').replace(/^ZOZOTOWN\s*[|｜:：]\s*/i,'').trim()||(url?shopOf(url)+'の商品':'（名前なし）');
+    S.seen[line]=1;S.wish.push({id:uid(),name:name.slice(0,40),price,url,cat:'買い物',added:date,done:null,hist:price?[{d:date,v:price}]:[]});wn++}
   save();
-  return {n,total:rows.length+bal.length,bal};
+  return {n,total:rows.length+bal.length+wn,bal,wn};
 }
 /* 残高のスクショ：ショートカットが「日時 ⇥ 残高 ⇥ 画面の文字（1行）」を書き足す。口座と金額を推し量り、確認画面で直せる */
 const ACCT_KW={yucho:/ゆうちょ|ゆうちよ|郵便|JP\s?BANK/i,mufg:/三菱|MUFG|UFJ/i};
@@ -1104,25 +1111,98 @@ const hrs=n=>S.wage>0?`約${(n/S.wage).toFixed(n/S.wage<10?1:0)}時間ぶん`:''
 /* ---------- 欲しいものリスト（30日ルール） ---------- */
 const WAIT=30;
 const wishAge=w=>Math.floor((new Date(today())-new Date(w.added))/864e5);
+const VERDICT={ok:['🟢','買ってOK','いまの家計なら無理なく買えます。買うなら気持ちよく！'],wait:['🟡','もう少し待とう','買えなくはないけれど、気になる点があります。'],save:['🔴','今は貯金しよう','いま買うと家計か目標に響きます。']};
+const shopOf=u=>{try{const h=new URL(u).hostname;return /zozo/.test(h)?'ZOZOTOWN':/amazon|amzn/.test(h)?'Amazon':/rakuten/.test(h)?'楽天':/uniqlo/.test(h)?'ユニクロ':h.replace(/^www\./,'')}catch(_){return ''}};
+/* 買う？貯める？：いまの家計の数字から、この値段の物を買ったときに何が起きるかを並べる */
+function decide(price,w){
+  const C=[],add=(lv,label,detail)=>C.push({lv,label,detail}),t=today(),k=curYM(),d=+t.slice(8),dim=daysInMonth(k);
+  /* 1. 自由に使えるお金（口座 − 目標の貯金 − カードの引き落とし予定） */
+  const acs=S.accounts.filter(a=>a.bal!=null);
+  if(acs.length){const saved=activeGoals().filter(g=>g.kind!=='invest').reduce((a,g)=>a+current(g),0),due=upcomingBills().filter(b=>b.status!=='future').reduce((a,b)=>a+billAmt(b),0),free=bankTotal()-saved-due;
+    add(free-price<0?'ng':free-price<price?'warn':'ok','自由に使えるお金',`${yen(free)} → 買うと ${yen(free-price)}（口座から目標の貯金とカードの引き落とし予定を引いた額）`)}
+  /* 2. 口座の残高がこの先足りるか（カードで買って次の引き落としに乗せた場合） */
+  if(acs.length&&S.cards.length){const c=S.cards[0],b=cardBills(c).find(b=>b.status==='open');
+    if(b){S.billFix=S.billFix||{};const key=c.id+'|'+b.key,had=key in S.billFix,old=S.billFix[key];S.billFix[key]=billAmt(b)+price;
+      const P=projection();if(had)S.billFix[key]=old;else delete S.billFix[key];
+      const m=Object.entries(P.mins).sort((a,b)=>a[1].v-b[1].v)[0];
+      if(m)add(m[1].v<0?'ng':'ok','この先の口座残高',`${c.name}で買うと ${md(b.payD)} の引き落としが約 ${yen(billAmt(b)+price)}。3か月でいちばん少ない残高 ${yen(m[1].v)}（${md(m[1].d)}・${esc((S.accounts.find(a=>a.id===m[0])||{}).name||'')}）`)}}
+  /* 3. 今月の予算 */
+  const cat=(w&&w.cat)||'買い物',B=S.budget||{},used=spendTotal(k),cb=(B.cats||{})[cat],cu=spendIn(k).filter(x=>x.cat===cat).reduce((a,x)=>a+x.amount,0);
+  if(cb)add(cu+price>cb?(cu+price>cb*1.5?'ng':'warn'):'ok',`今月の${cat}の予算`,`${yen(cu)} / ${yen(cb)} → 買うと ${yen(cu+price)}`);
+  else if(B.total)add(used+price>B.total?'warn':'ok','今月の予算',`${yen(used)} / ${yen(B.total)} → 買うと ${yen(used+price)}`);
+  /* 4. 目標への影響 */
+  const g=activeGoals().filter(g=>current(g)<g.target).sort((a,b)=>(b.deadline?1:0)-(a.deadline?1:0))[0],p=pace();
+  if(g){const delay=p>0?Math.round(price/p*30):null,pl=plan(g);
+    add(pl&&pl.diff<0&&price>Math.abs(pl.diff)/2?'warn':delay!=null&&delay>45?'warn':'ok',`目標「${esc(g.name)}」`,delay!=null?`この分を貯金に回すと約${delay}日早く届きます${pl?`（いま予定より${pl.diff>=0?yen(pl.diff)+' 先行':yen(-pl.diff)+' 遅れ'}）`:''}`:`あと ${yen(g.target-current(g))} の${Math.round(price/(g.target-current(g))*100)}%にあたります`)}
+  /* 5. 手取りに対する重さ・働いた時間 */
+  if(S.salary&&S.salary.amount){const r=price/S.salary.amount;add(r>.3?'ng':r>.1?'warn':'ok','手取りに対して',`月の手取りの${Math.round(r*100)}%${hrs(price)?'・'+hrs(price).replace('ぶん','')+'の働き':''}`)}
+  else if(hrs(price))add('ok','働いた時間にすると',hrs(price).replace('ぶん',''));
+  /* 6. 30日ルール */
+  if(w&&price<5000)add('ok','30日ルール','5,000円より安いので、待たなくても大丈夫');
+  else if(w){const a=wishAge(w);add(a>=WAIT?'ok':'warn','30日ルール',a>=WAIT?`${a}日待っても欲しい。本当に欲しいものです`:`書いてから${a}日。あと${WAIT-a}日待つと、衝動買いかどうかがわかります`)}
+  /* 7. 同じ分類で「ムダだった」が多いか */
+  const s90=(()=>{const x=new Date(t);x.setDate(x.getDate()-90);return fmtD(x)})(),bad=S.spend.filter(x=>x.cat===cat&&x.feel==='bad'&&x.date>=s90);
+  if(bad.length>=2)add('warn',`${cat}の「ムダだった」`,`90日で${bad.length}件・${yen(bad.reduce((a,x)=>a+x.amount,0))}。同じパターンではないか確かめましょう`);
+  /* 8. 値下がり */
+  if(w&&w.hist&&w.hist.length>1){const hi=Math.max(...w.hist.map(h=>h.v));if(price<hi)add('ok','値下がり',`最初 ${yen(w.hist[0].v)} → いま ${yen(price)}（${yen(hi-price)} 安い）`)}
+  const ng=C.filter(c=>c.lv==='ng').length,wa=C.filter(c=>c.lv==='warn').length;
+  return {C,v:ng?'save':wa?'wait':'ok'};
+}
+function decideHTML(price,w){
+  const r=decide(price,w),V=VERDICT[r.v];
+  return `<div style="text-align:center;margin:6px 0 4px"><div style="font-size:34px">${V[0]}</div><div style="font-size:20px;font-weight:800">${V[1]}</div><p class="hint" style="margin:2px 0 0">${V[2]}</p></div>
+   ${r.C.map(c=>`<div class="chk2"><span>${c.lv==='ok'?'✅':c.lv==='warn'?'⚠️':'⛔'}</span><span style="flex:1"><b>${c.label}</b><br><small style="color:var(--sub)">${c.detail}</small></span></div>`).join('')}
+   ${r.C.length<3?'<p class="hint">口座の残高・予算・手取りの給料を入れると、もっと詳しく判断できます。</p>':''}`;
+}
 function wishHTML(){
   const ws=S.wish.filter(w=>!w.done);
   const skipped=S.wish.filter(w=>w.done==='skip');
-  return `<h2 style="display:flex;justify-content:space-between;align-items:center">🛒 欲しいもの（${WAIT}日待つ）<button class="nb" data-wish>＋ 追加</button></h2><section class="card">
-  ${ws.length?`<ul class="list">${ws.map(w=>{const a=wishAge(w),ok=a>=WAIT;return `<li><span class="m">${esc(w.name)}<br><small style="color:var(--sub)">${ok?'待ち終わり。まだ欲しい？':'あと'+(WAIT-a)+'日'}${hrs(w.price)?' · '+hrs(w.price):''}</small></span><span class="a num">${yen(w.price)}</span>
-   ${ok?`<button class="nb" data-wbuy="${w.id}" style="background:var(--accsoft);color:var(--ink)">買う</button><button class="nb" data-wskip="${w.id}">やめて貯金</button>`:`<button class="x" data-wskip="${w.id}" aria-label="やめる">×</button>`}</li>`}).join('')}</ul>`
-   :'<p class="hint" style="margin:0">欲しくなったらまず書いておき、30日たっても欲しければ買う。やめた分はガマン貯金になります。</p>'}
-  ${skipped.length?`<p class="hint">これまでにやめた物：${skipped.length}個・<b class="num">${yen(skipped.reduce((a,w)=>a+w.price,0))}</b></p>`:''}</section>`;
+  return `<h2 style="display:flex;justify-content:space-between;align-items:center">🛒 欲しいもの<button class="nb" data-wish>＋ 追加</button></h2><section class="card">
+  ${ws.length?`<ul class="list">${ws.map(w=>{const a=wishAge(w),V=VERDICT[decide(w.price,w).v];return `<li><span class="m">${esc(w.name)}<br><small style="color:var(--sub)">${w.url?shopOf(w.url)+' · ':''}${a>=WAIT?'待ち終わり':'あと'+(WAIT-a)+'日'}${hrs(w.price)?' · '+hrs(w.price):''}</small></span><span class="a num" style="text-align:right">${yen(w.price)}<br><small>${V[0]} ${V[1]}</small></span><button class="x" data-wdec="${w.id}" aria-label="判断する">›</button></li>`}).join('')}</ul>`
+   :'<p class="hint" style="margin:0">欲しくなったらまず書いておきます。› で「買う？貯める？」の判断を出し、30日たっても欲しければ買う。やめた分はガマン貯金になります。</p>'}
+  ${skipped.length?`<p class="hint">これまでにやめた物：${skipped.length}個・<b class="num">${yen(skipped.reduce((a,w)=>a+w.price,0))}</b></p>`:''}
+  <details class="guide" style="margin-top:8px"><summary>ZOZOTOWN などのお気に入りから送る</summary>
+   <p class="hint">ZOZOTOWN のお気に入りは外から読む公式の方法がないため、iPhone の「共有」からショートカットで送ります（Amazon・楽天などでも使えます）。</p><ol>
+    <li>「ショートカット」で新しいショートカット「欲しいものに追加」を作り、詳細で「共有シートに表示」をオン（受け取る種類は URL とテキスト）</li>
+    <li>アクション「入力から URL を取得」→「Webページの詳細を取得（名前）」</li>
+    <li>アクション「数値を尋ねる」：「値段は？」</li>
+    <li>アクション「テキスト」：<code>現在の日付</code> ⇥ <code>欲しい</code> ⇥ <code>名前</code> ⇥ <code>尋ねた数値</code> ⇥ <code>URL</code>（日付は <code>yyyy-MM-dd HH:mm</code>、⇥ はタブ）</li>
+    <li>アクション「テキストファイルに追加」：<code>kotsukotsu-pay.txt</code>、「新しい行を作成」オン（Apple Pay と同じファイル）</li>
+    <li>ZOZOTOWN アプリでお気に入りの商品を開く → 共有 →「欲しいものに追加」→ 値段を入れる</li>
+    <li>こつこつの「出費」→「Apple Pay の記録を取り込む」で、欲しいものリストにも入ります</li>
+   </ol><div class="btns"><button class="btn" data-tab-copy>区切り用のタブをコピー</button></div>
+   <p class="hint">名前が取れないときは「テキストを尋ねる」に替えてください。ZOZOTOWN アプリのお気に入りの値下げ通知と組み合わせると、下がったときに › から値段を直して判断し直せます。</p></details></section>`;
 }
-function wishSheet(){
-  openSheet(`<form id="wf"><h3>欲しいものを書いておく</h3>
-   <label for="wn" style="margin-top:0">なに？</label><input id="wn" maxlength="30" placeholder="例：ワイヤレスイヤホン" required>
-   <label for="wp">値段</label><input id="wp" class="amount num" inputmode="numeric" placeholder="0" required>
-   <p class="hint" id="wh">${WAIT}日後に「まだ欲しい？」と聞きます。</p>
-   <div class="btns"><button type="button" class="btn" data-close>やめる</button><button class="btn pri">書いておく</button></div></form>`);
-  const wp=$('#wp');setTimeout(()=>$('#wn')?.focus(),50);
-  wp.addEventListener('input',()=>{const n=wp.value.replace(/[^0-9]/g,'');wp.value=n?(+n).toLocaleString('ja-JP'):'';$('#wh').textContent=`${WAIT}日後に「まだ欲しい？」と聞きます。${n&&hrs(+n)?'（'+hrs(+n)+'の働き）':''}`});
+function wishSheet(id,pre){
+  const w=id?S.wish.find(x=>x.id===id):{name:(pre&&pre.name)||'',price:(pre&&pre.price)||'',url:(pre&&pre.url)||'',cat:'買い物'};
+  openSheet(`<form id="wf"><h3>${id?'欲しいものを直す':'欲しいものを書いておく'}</h3>
+   <label for="wn" style="margin-top:0">なに？</label><input id="wn" maxlength="40" value="${esc(w.name)}" placeholder="例：ワイヤレスイヤホン" required>
+   <div class="two"><div><label for="wp">値段</label><input id="wp" class="amount num" inputmode="numeric" value="${w.price?(+w.price).toLocaleString('ja-JP'):''}" placeholder="0" required></div>
+   <div><label for="wc">分類</label><select id="wc">${CATS.map(([c,i])=>`<option value="${c}" ${c===(w.cat||'買い物')?'selected':''}>${i} ${c}</option>`).join('')}</select></div></div>
+   <label for="wu">お店のページ（なくてもよい）</label><input id="wu" type="url" value="${esc(w.url||'')}" placeholder="ZOZOTOWN などの商品ページの URL">
+   <div id="wdv"></div>
+   <div class="btns"><button type="button" class="btn" data-close>やめる</button><button class="btn pri">${id?'保存':'書いておく'}</button></div></form>`);
+  const wp=$('#wp'),upd=()=>{const n=+wp.value.replace(/[^0-9]/g,'');$('#wdv').innerHTML=n?`<p class="hint" style="margin-bottom:0">いま買うと：</p>${decideHTML(n,id?w:null)}`:''};
+  if(!id)setTimeout(()=>$('#wn')?.focus(),50);upd();
+  wp.addEventListener('input',()=>{const n=wp.value.replace(/[^0-9]/g,'');wp.value=n?(+n).toLocaleString('ja-JP'):'';upd()});
   $('#wf').addEventListener('submit',e=>{e.preventDefault();const p=+wp.value.replace(/[^0-9]/g,'');if(!p)return;
-    S.wish.push({id:uid(),name:$('#wn').value.trim(),price:p,added:today(),done:null});save();closeSheet();render();toast(`${WAIT}日後にまた聞きます`)});
+    const v={name:$('#wn').value.trim(),price:p,cat:$('#wc').value,url:$('#wu').value.trim()};
+    if(id){if(p!==w.price){w.hist=w.hist||[{d:w.added,v:w.price}];w.hist.push({d:today(),v:p})}Object.assign(w,v);save();closeSheet();render();decSheet(id)}
+    else{const nw={id:uid(),...v,added:today(),done:null,hist:[{d:today(),v:p}]};S.wish.push(nw);save();closeSheet();render();decSheet(nw.id)}});
+}
+/* 判断の画面：買った／やめて貯金／待つ */
+function decSheet(id){
+  const w=S.wish.find(x=>x.id===id);if(!w)return;
+  openSheet(`<form onsubmit="return false"><h3 style="display:flex;justify-content:space-between;gap:8px"><span>${esc(w.name)}</span><span class="num">${yen(w.price)}</span></h3>
+   ${w.url?`<p class="hint" style="margin-top:0"><a href="${esc(w.url)}" target="_blank" rel="noopener">${shopOf(w.url)}で見る ↗</a></p>`:''}
+   ${decideHTML(w.price,w)}
+   <div class="btns"><button type="button" class="btn" data-wedit="${w.id}">値段・内容を直す</button><button type="button" class="btn" data-close>待つ</button></div>
+   <div class="btns"><button type="button" class="btn" data-wskip="${w.id}">やめて貯金</button><button type="button" class="btn pri" data-wbuy="${w.id}">買った</button></div>
+   <p class="hint">「買った」を押すと出費に入ります（支払い方法を選べます）。「やめて貯金」はガマン貯金に入ります。</p></form>`);
+  $('#sheet form').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;const d=b.dataset;
+    if(d.wedit){wishSheet(d.wedit);return}
+    if(d.wbuy){w.done='bought';const x={id:uid(),date:today(),time:'',merchant:w.name,amount:w.price,cat:w.cat||'買い物',src:'manual',payBy:S.cards.length?'card:'+S.cards[0].id:''};S.spend.push(x);save();closeSheet();render();spendSheet(x.id);toast(wishAge(w)>=WAIT?'待っても欲しかったもの。楽しんでください':'出費に入れました');return}
+    if(d.wskip){w.done='skip';save();closeSheet();render();gamanSheet({amount:w.price,memo:w.name});return}});
 }
 
 /* ---------- 臨時収入の振り分け ---------- */
@@ -1578,8 +1658,9 @@ $('#payfile').addEventListener('change',async e=>{
   const r=importPayLog(await file.text());
   const d=new Date();S.payAt=`${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;save();
   render();
-  if(r.bal.length){bankAllSheet(r.bal);if(r.n)toast(`出費 ${r.n}件を取り込みました`);return}
-  toast(r.total?(r.n?`${r.n}件を取り込みました`:'新しい記録はありませんでした'):'記録が見つかりませんでした（ファイルを確認）');
+  const msg=[r.n?`出費 ${r.n}件`:'',r.wn?`欲しいもの ${r.wn}件`:''].filter(Boolean).join('・');
+  if(r.bal.length){bankAllSheet(r.bal);if(msg)toast(msg+'を取り込みました');return}
+  toast(r.total?(msg?msg+'を取り込みました':'新しい記録はありませんでした'):'記録が見つかりませんでした（ファイルを確認）');
 });
 $('#csvfile').addEventListener('change',async e=>{
   const file=e.target.files[0];e.target.value='';if(!file)return;
@@ -1616,6 +1697,7 @@ $('#app').addEventListener('click',async e=>{
   if('hide' in d){S.hide=!S.hide;save();render();return}
   if('gaman' in d){gamanSheet();return}
   if('wish' in d){wishSheet();return}
+  if(d.wdec){decSheet(d.wdec);return}
   if(d.card){cardSheet(d.card);return}
   if(d.aiask){aiSheet(+d.aiask);return}
   if(d.billfix){S.billFix=S.billFix||{};const cur=S.billFix[d.billfix];const[cid,k]=d.billfix.split('|');const c=S.cards.find(x=>x.id===cid);
