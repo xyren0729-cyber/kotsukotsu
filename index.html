@@ -58,6 +58,25 @@ h2{font-size:14px;color:var(--sub);margin:18px 0 8px;font-weight:700}
 .bar i{display:block;height:100%;border-radius:4px;background:var(--c,var(--acc))}
 .goal .meta{display:flex;justify-content:space-between;font-size:13px;color:var(--sub);gap:8px}
 .btn.ai{width:100%;margin-top:12px;background:var(--accsoft);border-color:transparent;color:var(--ink)}
+/* お知らせ（起きたときだけ） */
+.note{display:flex;align-items:center;gap:8px;background:var(--accsoft);border-radius:12px;padding:8px 6px 8px 12px;margin-bottom:8px;font-size:14px;line-height:1.5}
+.note>span{flex:1;min-width:0}
+.nb{border:0;background:var(--acc);color:var(--accink);border-radius:8px;padding:4px 10px;font-size:13px;font-weight:700;flex:none}
+.hd{display:flex;align-items:center;gap:2px}.eye{font-size:16px}
+body.hide main .num,body.hide main .chart text{filter:blur(7px)}
+/* 予算の色 */
+.bar.lv-ok i{background:var(--acc)}.bar.lv-warn i{background:var(--done)}.bar.lv-over i{background:var(--out)}
+.lvt-warn{color:var(--done)}.lvt-over{color:var(--out)}
+.cb{font-size:11px;color:var(--sub);font-weight:400}
+.rec summary{display:flex;justify-content:space-between;gap:8px;cursor:pointer;font-size:14px;list-style:none}
+.rec summary::-webkit-details-marker{display:none}
+.bcats{display:grid;grid-template-columns:1fr 1fr;gap:4px 10px}.bcats label{margin:6px 0 0}
+.chk{display:flex;align-items:center;gap:8px;color:var(--ink);font-size:14px}.chk input{width:auto;margin:0}
+.frame{margin-top:12px;border-top:1px solid var(--line);padding-top:8px}
+.fr{display:flex;justify-content:space-between;gap:8px;font-size:13px;color:var(--sub);padding:2px 0}.fr b{color:var(--ink)}
+.simres{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:12px 0 6px}
+.simres div{background:var(--bg);border-radius:10px;padding:6px 10px;min-width:0}.simres small{display:block;font-size:11px;color:var(--sub)}.simres b{font-size:15px}
+.simres div:first-child{grid-column:1/-1}.simres div:first-child b{font-size:24px}
 .guide summary{cursor:pointer;font-weight:700;font-size:14px}
 .guide ol{padding-left:1.3em;margin:8px 0;font-size:14px}.guide li{margin-bottom:6px}
 .guide code{background:var(--bg);border-radius:4px;padding:0 4px;font-size:13px}
@@ -140,6 +159,7 @@ input,select,textarea{width:100%;border:1px solid var(--line);border-radius:10px
 </nav>
 <div class="sheet" id="sheet" hidden></div>
 <input type="file" id="payfile" accept=".txt,text/plain" hidden>
+<input type="file" id="restorefile" accept=".json,application/json" hidden>
 <div class="toast" id="toast" hidden></div>
 
 <script>
@@ -164,7 +184,11 @@ function load(){
   return fill(s);
 }
 /* 出費まわりの項目がない古いデータにも足す */
-function fill(s){s.spend=s.spend||[];s.rules=s.rules||{};s.seen=s.seen||{};return s}
+function fill(s){
+  s.spend=s.spend||[];s.rules=s.rules||{};s.seen=s.seen||{};
+  s.budget=s.budget||{total:0,cats:{}};s.fixed=s.fixed||[];s.dismiss=s.dismiss||{};
+  return s;
+}
 
 /* ---------- 出費 ---------- */
 const CATS=[['食費','🍙'],['カフェ','☕'],['コンビニ','🏪'],['交通','🚃'],['買い物','🛍️'],['日用品','🧴'],['娯楽','🎬'],['サブスク','🔁'],['その他','📦']];
@@ -189,6 +213,54 @@ function guessCat(m){
 const spendIn=k=>S.spend.filter(x=>ym(x.date)===k);
 const spendTotal=k=>spendIn(k).reduce((a,x)=>a+x.amount,0);
 function byCat(k){const o={};for(const x of spendIn(k))o[x.cat]=(o[x.cat]||0)+x.amount;return Object.entries(o).sort((a,b)=>b[1]-a[1])}
+const prevYM=k=>{const[y,m]=k.split('-').map(Number);const d=new Date(y,m-2,1);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')};
+const daysInMonth=k=>{const[y,m]=k.split('-').map(Number);return new Date(y,m,0).getDate()};
+/* 予算の使い方で色を決める：〜80% ふつう、〜100% 注意、超え 赤 */
+const level=(used,b)=>!b?'':used>b?'over':used>b*.8?'warn':'ok';
+
+/* 毎月同じ店・ほぼ同じ金額の支払い（サブスク・固定費）を見つける。直近4か月で2か月以上、金額の差が15%以内 */
+function recurring(){
+  const since=(()=>{let k=curYM();for(let i=0;i<3;i++)k=prevYM(k);return k})();
+  const by={};
+  for(const x of S.spend){if(x.src==='fixed'||ym(x.date)<since)continue;(by[x.merchant]=by[x.merchant]||[]).push(x)}
+  const out=[];
+  for(const[m,xs]of Object.entries(by)){
+    const months=new Set(xs.map(x=>ym(x.date)));if(months.size<2)continue;
+    if(xs.length>months.size)continue; /* 月に2回以上ある店（スーパーなど）は除く */
+    const per={};for(const x of xs)per[ym(x.date)]=(per[ym(x.date)]||0)+x.amount;
+    const v=Object.values(per),lo=Math.min(...v),hi=Math.max(...v);
+    if(hi>lo*1.15)continue;
+    const last=xs.sort((a,b)=>b.date.localeCompare(a.date))[0];
+    out.push({name:m,amount:per[ym(last.date)],cat:last.cat,auto:true});
+  }
+  for(const f of S.fixed)out.push({name:f.name,amount:f.amount,cat:f.cat,auto:false,day:f.day});
+  return out.sort((a,b)=>b.amount-a.amount);
+}
+/* ふだんの1か月の出費（直近3か月のうち記録がある月の平均） */
+function avgSpend(){
+  let k=curYM(),v=[];for(let i=0;i<3;i++){k=prevYM(k);const t=spendTotal(k);if(t)v.push(t)}
+  return v.length?Math.round(v.reduce((a,b)=>a+b,0)/v.length):null;
+}
+/* 貯金がプラスだった月が何か月続いているか（今月がプラスなら今月から数える） */
+function streak(){
+  let k=monthNet(curYM())>0?curYM():prevYM(curYM()),n=0;
+  while(monthNet(k)>0&&n<120){n++;k=prevYM(k)}
+  return n;
+}
+/* 積立の将来額（毎月複利）。年ごとに元本と額を返す */
+function simulate(init,monthly,years,rate){
+  const r=rate/100/12,out=[];let v=init,p=init;
+  for(let y=1;y<=years;y++){for(let i=0;i<12;i++){v=v*(1+r)+monthly;p+=monthly}out.push({y,p,v})}
+  return out;
+}
+/* 新NISA：つみたて投資枠 年120万、成長投資枠 年240万、生涯 1,800万（元本ベース） */
+const NISA={tsumitate:1200000,seicho:2400000,life:18000000};
+function nisaUsed(){
+  const y=today().slice(0,4),ids=new Set(S.goals.filter(g=>g.nisa).map(g=>g.id));
+  const year=S.tx.filter(t=>ids.has(t.goalId)&&t.date.startsWith(y)&&t.amount>0).reduce((a,t)=>a+t.amount,0);
+  const life=[...ids].reduce((a,id)=>a+Math.max(0,balance(id)),0);
+  return {year,life,any:ids.size>0};
+}
 
 /* ショートカットが書いたファイルを読む。1行＝「日時<TAB>店名<TAB>金額<TAB>カード」。同じ行は二度入れない */
 function parsePayLog(text){
@@ -268,7 +340,18 @@ function runAuto(){
       g.auto.last=k;n++;k=nextYM(k);
     }
   }
-  if(n){save();setTimeout(()=>toast(`定期積立を${n}件記録しました`),300)}
+  /* 固定費：同じように、支払日を過ぎた月の分を出費に記録する */
+  let m=0;
+  for(const f of S.fixed){
+    let k=f.last?nextYM(f.last):curYM();
+    while(k<=curYM()){
+      const date=k+'-'+String(Math.min(f.day,28)).padStart(2,'0');
+      if(date>t)break;
+      S.spend.push({id:uid(),date,time:'',merchant:f.name,amount:f.amount,cat:f.cat,src:'fixed'});
+      f.last=k;m++;k=nextYM(k);
+    }
+  }
+  if(n||m){save();setTimeout(()=>toast([n?`定期積立を${n}件`:'',m?`固定費を${m}件`:''].filter(Boolean).join('、')+'記録しました'),300)}
 }
 
 /* AIに相談：いまの状況をまとめた文を作る（個人を特定する情報は入れない） */
@@ -294,7 +377,12 @@ function summaryText(q){
     L.push('','■ 出費（Apple Pay などの記録）');
     for(const k of[prev,now]){const c=byCat(k);if(!c.length)continue;
       L.push(`${+k.slice(5)}月${k===now?'（'+(+today().slice(8))+'日まで）':''}：合計 ${yen(spendTotal(k))}（`+c.map(([n,v])=>`${n} ${yen(v)}`).join('、')+'）')}
+    if(S.budget.total)L.push(`月の予算：${yen(S.budget.total)}`+(Object.keys(S.budget.cats).length?'（'+Object.entries(S.budget.cats).map(([c,v])=>`${c} ${yen(v)}`).join('、')+'）':''));
+    const rc=recurring();if(rc.length)L.push('毎月の支払い：'+rc.map(r=>`${r.name} ${yen(r.amount)}`).join('、'));
+    const waste=spendIn(now).concat(spendIn(prev)).filter(x=>x.feel==='bad');
+    if(waste.length)L.push(`「ムダだった」と記録した出費（先月〜今月）：${waste.length}件、${yen(waste.reduce((a,x)=>a+x.amount,0))}（`+waste.slice(0,8).map(x=>x.merchant).join('、')+'）');
   }
+  if(S.aiNote&&S.aiNote.text)L.push('',`■ 前回（${S.aiNote.date}）の相談で AI から言われたこと（要点）`,S.aiNote.text.slice(0,600));
   L.push('','■ 相談したいこと',q,'');
   L.push('※ お願い：日本に住む個人として、一般的な考え方や選択肢（先取り貯金、積立額の見直し、新NISAなどの制度の一般的な説明など）を、わかりやすく短めに教えてください。特定の銘柄や商品をすすめるのではなく、判断のポイントを示してください。');
   return L.join('\n');
@@ -312,6 +400,7 @@ let view={tab:'home',goal:null,month:null};
 function render(){
   document.documentElement.dataset.theme=S.theme==='auto'?'':S.theme;
   if(S.theme==='auto')delete document.documentElement.dataset.theme;
+  document.body.classList.toggle('hide',!!S.hide);
   document.querySelectorAll('nav.tabs button').forEach(b=>b.setAttribute('aria-current',b.dataset.tab===view.tab?'page':'false'));
   $('#fab').hidden=view.tab==='settings';
   const app=$('#app');
@@ -325,16 +414,38 @@ function render(){
 function homeHTML(){
   const now=new Date(),key=today().slice(0,7);
   const net=monthNet(key),gs=activeGoals();
-  let h=`<h1><span>こつこつ</span><span class="num">${now.getMonth()+1}月${now.getDate()}日</span></h1>
+  const st=streak();
+  let h=`<h1><span>こつこつ</span><span class="hd"><span>${now.getMonth()+1}月${now.getDate()}日</span><button class="x eye" data-hide aria-label="金額を${S.hide?'表示':'隠す'}">${S.hide?'🙈':'👁'}</button></span></h1>
+  ${noticesHTML()}
   <section class="card total"><div style="font-size:13px;color:var(--sub)">いまの貯金</div>
   <div class="big num">${yen(totalAll())}</div>
-  <div class="row num"><span>今月 <b class="${net>=0?'plus':'minus'}">${sgn(net)}</b></span><span>目標 ${gs.length}件</span></div>
+  <div class="row"><span>今月 <b class="num ${net>=0?'plus':'minus'}">${sgn(net)}</b></span>${st>=2?`<span>🔥 ${st}か月連続プラス</span>`:`<span>目標 ${gs.length}件</span>`}</div>
   ${gs.length?'<button class="btn ai" data-ai>💬 AIに相談する</button>':''}</section>`;
   if(!gs.length)h+=`<div class="card empty">まだ目標がありません。<br>「＋」から最初の目標を作りましょう。</div>`;
   for(const g of gs)h+=goalCard(g);
   const arch=S.goals.filter(g=>g.archived);
   if(arch.length){h+=`<h2>しまった目標</h2>`;for(const g of arch)h+=goalCard(g)}
   return h;
+}
+/* お知らせ：起きたときだけ、ホームの上に1行ずつ（最大3つ）。×で今月は出さない */
+function noticesHTML(){
+  const cur=curYM(),day=+today().slice(8),N=[],off=k=>S.dismiss[k];
+  const note=(key,text,btn)=>N.push(`<div class="note"><span>${text}</span>${btn||''}<button class="x" data-dismiss="${key}" aria-label="閉じる">×</button></div>`);
+  if(S.payday&&day>=S.payday&&!off('pay:'+cur))note('pay:'+cur,'給料日です。先取り貯金はしましたか？','<button class="nb" data-addany>記録</button>');
+  const pv=prevYM(cur);
+  if(day<=7&&!off('rev:'+cur)&&(monthNet(pv)||spendTotal(pv))){
+    const pp=prevYM(pv),dn=monthNet(pv)-monthNet(pp),ds=spendTotal(pv)-spendTotal(pp);
+    note('rev:'+cur,`${+pv.slice(5)}月のふり返り：貯金 <b class="num">${sgn(monthNet(pv))}</b>（前月比 ${sgn(dn)}）${spendTotal(pv)?`・出費 <b class="num">${yen(spendTotal(pv))}</b>（${sgn(ds)}）`:''}`);
+  }
+  for(const g of activeGoals()){
+    if(g.kind!=='invest'||!S.tx.some(t=>t.goalId===g.id))continue;
+    const old=!g.valueDate||(new Date(today())-new Date(g.valueDate))/864e5>30;
+    if(old&&!off('val:'+g.id+':'+cur))note('val:'+g.id+':'+cur,`「${esc(g.name)}」の評価額を更新しましょう${g.valueDate?'（前回 '+md(g.valueDate)+'）':''}`,`<button class="nb" data-value="${g.id}">更新</button>`);
+  }
+  if(day>=daysInMonth(cur)-2&&activeGoals().length&&!off('eom:'+cur))note('eom:'+cur,'月末です。今月のふり返りを AI に相談しませんか','<button class="nb" data-ai>相談</button>');
+  const bkOld=!S.backupAt||(new Date(today())-new Date(S.backupAt))/864e5>30;
+  if(bkOld&&S.tx.length+S.spend.length>=5&&!off('bk:'+cur))note('bk:'+cur,`バックアップをファイルに保存しましょう（前回：${S.backupAt?md(S.backupAt):'なし'}）`,'<button class="nb" data-backup>保存</button>');
+  return N.slice(0,3).join('');
 }
 function goalCard(g){
   const b=current(g),p=g.target>0?Math.min(100,b/g.target*100):0,d=daysLeft(g.deadline),pm=perMonth(g);
@@ -367,6 +478,9 @@ function detailHTML(id){
     <div><small>評価額${g.valueDate?'（'+md(g.valueDate)+'更新）':''}</small><b>${g.value!=null?yen(b):'未入力'}${gain!=null?` <span class="${gain>=0?'plus':'minus'}" style="font-size:13px">${sgn(gain)}</span>`:''}</b></div>`:''}
    </div>
    ${g.auto&&g.auto.amount?`<p class="hint">定期積立：毎月${g.auto.day}日に ${yen(g.auto.amount)} を自動で記録</p>`:''}
+   ${g.nisa?(()=>{const u=nisaUsed();return `<div class="frame"><div class="fr"><span>今年の NISA 投資額（つみたて投資枠 年120万円）</span><b class="num">${yen(u.year)}</b></div><div class="bar"><i style="width:${Math.min(100,u.year/NISA.tsumitate*100)}%"></i></div>
+    <div class="fr"><span>生涯の非課税枠 1,800万円（入れた額で計算）</span><b class="num">${yen(u.life)}</b></div><div class="bar"><i style="width:${Math.min(100,u.life/NISA.life*100)}%"></i></div>
+    <p class="hint">成長投資枠（年240万円）も使うときは、合計で年360万円まで。売ると翌年に枠が戻るため、ここでは入れた額での目安です。</p></div>`})():''}
    <div class="btns"><button class="btn pri" data-add="${id}">${inv?'積み立て・引き出し':'入金・出金'}</button>${inv?`<button class="btn" data-value="${id}">評価額を更新</button>`:''}</div>
    <div class="btns" style="margin-top:8px"><button class="btn" data-edit="${id}">目標を編集</button></div>
   </section>
@@ -383,20 +497,31 @@ function spendHTML(){
   const prevK=(()=>{const d=new Date(y,m-2,1);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')})();
   const pt=spendTotal(prevK);
   const items=spendIn(k).sort((a,b)=>(b.date+b.time).localeCompare(a.date+a.time));
+  const B=S.budget.total,isCur=k===curYM(),left=B-tot,lv=level(tot,B);
+  const daysRest=daysInMonth(k)-(+today().slice(8))+1;
   let h=`<h1><span>出費</span><span class="mon"><button class="x" data-mon="${prevK}" aria-label="前の月">‹</button>${y}年${m}月<button class="x" data-mon="${nextYM(k)}" ${k>=curYM()?'disabled':''} aria-label="次の月">›</button></span></h1>
   <section class="card total"><div style="font-size:13px;color:var(--sub)">${m}月の出費</div>
    <div class="big num">${yen(tot)}</div>
+   ${B?`<div class="bar lv-${lv}"><i style="width:${Math.min(100,tot/B*100)}%"></i></div>
+   <div class="row"><span>予算 <b class="num">${yen(B)}</b></span><span class="lvt-${lv}">${left>=0?'あと <b class="num">'+yen(left)+'</b>':'<b class="num">'+yen(-left)+'</b> 超え'}</span></div>
+   ${isCur&&left>0?`<div class="row"><span>今日から1日あたり <b class="num">${yen(Math.floor(left/daysRest))}</b>（残り${daysRest}日）</span></div>`:''}
+   ${isCur&&left>0&&daysRest<=5&&activeGoals().length?`<button class="btn" style="width:100%;margin-top:10px" data-leftover="${left}">余り ${yen(left)} を貯金へ</button>`:''}`:''}
    <div class="row num"><span>先月 ${yen(pt)}</span><span>${items.length}件</span></div>
    <button class="btn ai" data-pay>Apple Pay の記録を取り込む</button>
    ${S.payAt?`<p class="hint" style="text-align:center">前回の取り込み：${esc(S.payAt)}</p>`:''}</section>`;
-  if(cats.length)h+=`<section class="card">${cats.map(([c,v])=>`<div class="cat"><span>${CAT_ICON[c]||'📦'} ${c}</span><span class="cbar"><i style="width:${v/max*100}%;background:${CAT_COLOR[c]||'var(--acc)'}"></i></span><b class="num">${yen(v)}</b></div>`).join('')}</section>`;
+  if(cats.length)h+=`<section class="card">${cats.map(([c,v])=>{const cb=S.budget.cats[c],l=level(v,cb);
+    return `<div class="cat"><span>${CAT_ICON[c]||'📦'} ${c}</span><span class="cbar"><i style="width:${cb?Math.min(100,v/cb*100):v/max*100}%;background:${l==='over'?'var(--out)':l==='warn'?'var(--done)':CAT_COLOR[c]||'var(--acc)'}"></i></span><b class="num ${l==='over'?'minus':''}">${yen(v)}${cb?`<small class="cb"> / ${short(cb)}</small>`:''}</b></div>`}).join('')}</section>`;
+  const rc=recurring();
+  if(rc.length){const sum=rc.reduce((a,r)=>a+r.amount,0);
+    h+=`<details class="card rec"><summary><span>🔁 毎月の支払い ${rc.length}件</span><b class="num">月 ${yen(sum)}<small class="cb"> 年 ${short(sum*12)}</small></b></summary><ul class="list">${rc.map(r=>`<li><span class="m">${CAT_ICON[r.cat]||'📦'} ${esc(r.name)}${r.auto?'':' <span class="tag">固定費</span>'}</span><span class="a num">${yen(r.amount)}</span><span class="d num" style="width:auto">年 ${short(r.amount*12)}</span></li>`).join('')}</ul>
+    <p class="hint">同じお店でほぼ同じ金額が2か月以上続いたものを自動で見つけています。固定費は「設定」で登録できます。</p></details>`}
   if(!items.length)h+=`<div class="card empty">この月の出費はまだありません。<br>「取り込む」か「＋」から入れられます。</div>`;
   else{
     h+=`<h2>記録</h2><section class="card"><ul class="list">`;
     let last='';
     for(const x of items){
       if(x.date!==last){h+=`<li class="day">${md(x.date)}</li>`;last=x.date}
-      h+=`<li><span class="d num">${x.time||''}</span><span class="m">${CAT_ICON[x.cat]||'📦'} ${esc(x.merchant)}</span><span class="a num">${yen(x.amount)}</span><button class="x" data-sp="${x.id}" aria-label="編集">›</button></li>`;
+      h+=`<li><span class="d num">${x.time||''}</span><span class="m">${CAT_ICON[x.cat]||'📦'} ${esc(x.merchant)}${x.feel==='bad'?' <span class="tag">ムダ</span>':x.feel==='good'?' <span class="tag">よかった</span>':''}</span><span class="a num">${yen(x.amount)}</span><button class="x" data-sp="${x.id}" aria-label="編集">›</button></li>`;
     }
     h+=`</ul></section>`;
   }
@@ -422,7 +547,43 @@ function chartHTML(){
   return `<h1><span>グラフ</span></h1>
   <section class="card chart"><div style="font-size:13px;color:var(--sub);margin-bottom:6px">月末の貯金（12か月）</div>${S.tx.length?svg:'<div class="empty">記録がたまると表示されます</div>'}
   <div class="legend">${gs.map(g=>`<span style="--c:${g.color}">${esc(g.name)}</span>`).join('')}</div></section>
-  <h2>月ごとの増減</h2><section class="card"><ul class="list">${nets.reverse().map(([m,n])=>`<li><span class="m">${m.slice(0,4)}年${+m.slice(5)}月</span><span class="a num ${n>=0?'plus':'minus'}">${sgn(n)}</span></li>`).join('')}</ul></section>`;
+  <h2>月ごとの増減</h2><section class="card"><ul class="list">${nets.reverse().map(([m,n])=>`<li><span class="m">${m.slice(0,4)}年${+m.slice(5)}月</span><span class="a num ${n>=0?'plus':'minus'}">${sgn(n)}</span></li>`).join('')}</ul></section>
+  ${defenseHTML()}
+  <h2>積立シミュレーター</h2><section class="card sim">
+   <div class="two"><div><label for="sim-m">毎月の積立</label><input id="sim-m" class="num" inputmode="numeric" value="${sim.m.toLocaleString('ja-JP')}"></div>
+   <div><label for="sim-i">いまある額</label><input id="sim-i" class="num" inputmode="numeric" value="${sim.i.toLocaleString('ja-JP')}"></div></div>
+   <div class="two"><div><label for="sim-y">年数</label><input id="sim-y" class="num" inputmode="numeric" value="${sim.y}"></div>
+   <div><label for="sim-r">想定の利回り（年 %）</label><input id="sim-r" class="num" inputmode="decimal" value="${sim.r}"></div></div>
+   <div id="simout">${simOut()}</div>
+   <p class="hint">毎月複利で計算した目安です。実際の値動きは上下し、この通りに増える保証はありません。</p></section>`;
+}
+/* シミュレーターの入力（はじめは積み立て目標の合計から） */
+const invGoals=()=>activeGoals().filter(g=>g.kind==='invest');
+let sim={m:invGoals().reduce((a,g)=>a+(g.auto?.amount||0),0)||30000,i:invGoals().reduce((a,g)=>a+current(g),0),y:20,r:3};
+function simOut(){
+  const rows=simulate(sim.i,sim.m,Math.min(50,Math.max(1,sim.y)),sim.r);if(!rows.length)return '';
+  const last=rows.at(-1),gain=last.v-last.p,mx=niceMax(last.v);
+  const pick=rows.filter(r=>r.y%5===0||r.y===rows.length).slice(-10);
+  const W=320,H=120,bw=W/pick.length;
+  let svg=`<svg viewBox="0 0 ${W} ${H+18}" role="img" aria-label="積立の将来額">`;
+  pick.forEach((r,i)=>{const hp=r.p/mx*H,hv=(r.v-r.p)/mx*H,x=i*bw+bw*.2,w=bw*.6;
+    svg+=`<rect x="${x}" y="${H-hp}" width="${w}" height="${hp}" fill="var(--acc)" opacity=".45" rx="1.5"/><rect x="${x}" y="${H-hp-Math.max(0,hv)}" width="${w}" height="${Math.max(0,hv)}" fill="var(--acc)" rx="1.5"/><text x="${x+w/2}" y="${H+14}" text-anchor="middle">${r.y}年</text>`});
+  svg+='</svg>';
+  return `<div class="simres"><div><small>${rows.length}年後</small><b class="num">${yen(last.v)}</b></div><div><small>入れた額</small><b class="num">${yen(last.p)}</b></div><div><small>増えた分</small><b class="num ${gain>=0?'plus':'minus'}">${sgn(gain)}</b></div></div>
+   <div class="chart">${svg}</div><div class="legend"><span style="--c:color-mix(in srgb,var(--acc) 45%,transparent)">入れた額</span><span style="--c:var(--acc)">増えた分</span></div>`;
+}
+/* 生活防衛資金の目安：ふだんの1か月の出費 × 3〜6か月 */
+function defenseHTML(){
+  const avg=avgSpend();if(!avg)return '';
+  const em=activeGoals().filter(g=>g.emergency),src=em.length?em:activeGoals().filter(g=>g.kind!=='invest');
+  const have=src.reduce((a,g)=>a+current(g),0),lo=avg*3,hi=avg*6;
+  const msg=have>=hi?'6か月分あります。安心な水準です':have>=lo?'3か月分はあります。6か月分あるとさらに安心です':`3か月分まで あと ${yen(lo-have)}`;
+  return `<h2>生活防衛資金の目安</h2><section class="card">
+   <div class="fr"><span>ふだんの1か月の出費（直近の平均）</span><b class="num">${yen(avg)}</b></div>
+   <div class="fr"><span>目安（3〜6か月分）</span><b class="num">${yen(lo)} 〜 ${yen(hi)}</b></div>
+   <div class="fr"><span>${em.length?'緊急用の目標':'貯金（積み立て以外）'}</span><b class="num">${yen(have)}</b></div>
+   <div class="bar"><i style="width:${Math.min(100,have/hi*100)}%"></i></div>
+   <p class="hint" style="margin-top:2px">${msg}。出費は記録した分だけで計算しているので、家賃など記録していない支払いがあれば実際はもっと多めです。</p></section>`;
 }
 function niceMax(v){const p=Math.pow(10,Math.floor(Math.log10(v)));for(const k of[1,2,2.5,5,10])if(k*p>=v)return k*p;return 10*p}
 function short(v){return v>=10000?(v/10000).toLocaleString('ja-JP',{maximumFractionDigits:1})+'万':Math.round(v).toLocaleString('ja-JP')}
@@ -430,7 +591,16 @@ function short(v){return v>=10000?(v/10000).toLocaleString('ja-JP',{maximumFract
 function settingsHTML(){
   return `<h1><span>設定</span></h1>
   <h2>表示</h2><section class="card"><div class="seg" id="theme">${[['auto','端末に合わせる'],['light','ライト'],['dark','ダーク']].map(([k,l])=>`<button type="button" data-theme="${k}" aria-pressed="${S.theme===k}">${l}</button>`).join('')}</div></section>
-  <h2>目標</h2><section class="card"><button class="btn" style="width:100%" data-newgoal>＋ 目標を作る</button></section>
+  <h2>目標</h2><section class="card"><button class="btn" style="width:100%" data-newgoal>＋ 目標を作る</button>
+   <label for="payday">給料日（先取り貯金のお知らせ・なしは空）</label><select id="payday"><option value="">なし</option>${Array.from({length:31},(_,i)=>`<option value="${i+1}" ${S.payday===i+1?'selected':''}>${i+1}日</option>`).join('')}</select></section>
+  <h2>予算（毎月）</h2><section class="card">
+   <label for="bt" style="margin-top:0">出費の合計</label><input id="bt" class="num" inputmode="numeric" value="${S.budget.total?S.budget.total.toLocaleString('ja-JP'):''}" placeholder="例：80,000（なしは空）">
+   <details style="margin-top:10px"><summary class="hint" style="cursor:pointer">分類ごとの予算（入れたものだけ使う）</summary>
+   <div class="bcats">${CATS.map(([c,i])=>`<label>${i} ${c}<input class="num" inputmode="numeric" data-bcat="${c}" value="${S.budget.cats[c]?S.budget.cats[c].toLocaleString('ja-JP'):''}" placeholder="—"></label>`).join('')}</div></details>
+   <div class="btns"><button class="btn pri" data-savebudget>予算を保存</button></div></section>
+  <h2>固定費（毎月自動で出費に記録）</h2><section class="card">
+   ${S.fixed.length?`<ul class="list">${S.fixed.map(f=>`<li><span class="m">${CAT_ICON[f.cat]||'📦'} ${esc(f.name)}</span><span class="d num" style="width:auto">毎月${f.day}日</span><span class="a num">${yen(f.amount)}</span><button class="x" data-fixed="${f.id}" aria-label="編集">›</button></li>`).join('')}</ul>`:'<p class="hint" style="margin-top:0">家賃・携帯代・定期代など、毎月決まった支払いを入れておくと、その日に自動で出費に入ります。</p>'}
+   <div class="btns"><button class="btn" data-fixed="new">＋ 固定費を追加</button></div></section>
   <h2>Apple Pay の自動記録</h2><section class="card guide">
    <p class="hint" style="margin-top:0">iPhone の「ショートカット」で、Apple Pay で払うたびに1行ずつファイルへ書き足します。アプリでは「出費」→「取り込む」でそのファイルを選ぶと、まだ入っていない分だけ入ります。</p>
    <details><summary>準備のしかた（1回だけ）</summary><ol>
@@ -446,8 +616,9 @@ function settingsHTML(){
    <div class="btns"><button class="btn" data-tab-copy>区切り用のタブをコピー</button></div>
    <p class="hint">ファイルは消さなくて大丈夫です。同じ行は二度入りません。現金や口座引き落としは記録されないので、必要なら「出費」の「＋」で入れてください。</p></details></section>
   <h2>バックアップ</h2><section class="card">
-   <p class="hint" style="margin-top:0">データはこの端末の中だけにあります。機種変更の前や、ときどきコピーして残しておくと安心です。</p>
-   <div class="btns"><button class="btn" data-copy>データをコピー</button><button class="btn" data-csv>CSVで保存</button></div>
+   <p class="hint" style="margin-top:0">データはこの端末の中だけにあります。月に1回くらい、ファイルに保存しておくと安心です（iPhone では「"ファイル"に保存」→ iCloud Drive）。前回：${S.backupAt?md(S.backupAt):'なし'}</p>
+   <div class="btns"><button class="btn pri" data-backup>ファイルに保存</button><button class="btn" data-restore>ファイルから戻す</button></div>
+   <div class="btns" style="margin-top:8px"><button class="btn" data-copy>データをコピー</button><button class="btn" data-csv>CSVで保存</button></div>
    <label for="imp">貼り付けて読み込む</label><textarea id="imp" rows="3" placeholder="コピーしたデータを貼り付け"></textarea>
    <div class="btns"><button class="btn" data-import>読み込む（いまのデータは置き換え）</button></div></section>
   <h2>そのほか</h2><section class="card"><div class="btns" style="margin-top:0"><button class="btn warn" data-wipe>すべてのデータを消す</button></div>
@@ -458,10 +629,11 @@ function settingsHTML(){
 function openSheet(html){const s=$('#sheet');s.innerHTML=html;s.hidden=false}
 function closeSheet(){$('#sheet').hidden=true;$('#sheet').innerHTML=''}
 
-function txSheet(gid){
+function txSheet(gid,preset,memo){
   const gs=activeGoals();
   if(!gs.length)return goalSheet();
   let sel=gid||gs[0].id,sign=1;
+  setTimeout(()=>{if(preset&&$('#amt'))$('#amt').value=(+preset).toLocaleString('ja-JP');if(memo&&$('#memo'))$('#memo').value=memo},0);
   openSheet(`<form id="txf"><h3>記録する</h3>
    <div class="seg"><button type="button" data-sign="1" aria-pressed="true">入金</button><button type="button" class="out" data-sign="-1" aria-pressed="false">出金</button></div>
    <label for="amt">金額</label><input id="amt" class="amount num" inputmode="numeric" pattern="[0-9,]*" placeholder="0" autocomplete="off" required>
@@ -498,13 +670,16 @@ function goalSheet(id){
   let icon=g.icon,color=g.color,kind=g.kind||'save';
   const au=g.auto||{amount:0,day:25};
   openSheet(`<form id="gf"><h3>${id?'目標を編集':'目標を作る'}</h3>
-   <div class="seg"><button type="button" data-k="save" aria-pressed="${kind==='save'}">貯金</button><button type="button" data-k="invest" aria-pressed="${kind==='invest'}">積み立て（投資）</button></div>
+   ${id?'':`<label style="margin-top:0">ひな形から作る</label><div class="chips">${TEMPLATES.map((t,i)=>`<button type="button" data-tpl="${i}">${t.icon} ${t.label}</button>`).join('')}</div>`}
+   <div class="seg" style="margin-top:10px"><button type="button" data-k="save" aria-pressed="${kind==='save'}">貯金</button><button type="button" data-k="invest" aria-pressed="${kind==='invest'}">積み立て（投資）</button></div>
    <label for="gn">名前</label><input id="gn" value="${esc(g.name)}" placeholder="例：沖縄旅行" maxlength="24" required>
    <div class="two"><div><label for="gt">目標金額</label><input id="gt" class="num" inputmode="numeric" value="${g.target?(+g.target).toLocaleString('ja-JP'):''}" placeholder="150,000" required></div>
    <div><label for="gd">期限（なくてもよい）</label><input id="gd" type="date" value="${g.deadline||''}"></div></div>
    <div class="two"><div><label for="aa">定期積立（毎月・なしは空）</label><input id="aa" class="num" inputmode="numeric" value="${au.amount?au.amount.toLocaleString('ja-JP'):''}" placeholder="例：20,000"></div>
    <div><label for="ad">積立日</label><select id="ad">${Array.from({length:28},(_,i)=>`<option value="${i+1}" ${au.day===i+1?'selected':''}>${i+1}日</option>`).join('')}</select></div></div>
    <p class="hint">設定すると、毎月この日を過ぎてアプリを開いたときに自動で記録します。</p>
+   <label class="chk"><input type="checkbox" id="gnisa" ${g.nisa?'checked':''}> NISA の口座（年間枠・生涯枠の目安を出す）</label>
+   <label class="chk"><input type="checkbox" id="gem" ${g.emergency?'checked':''}> 生活防衛資金（緊急用）として数える</label>
    <label>アイコン</label><div class="chips icons">${ICONS.map(i=>`<button type="button" data-i="${i}" aria-pressed="${i===icon}">${i}</button>`).join('')}</div>
    <label>色</label><div class="chips colors">${COLORS.map(c=>`<button type="button" data-c="${c}" style="--c:${c}" aria-pressed="${c===color}" aria-label="色"></button>`).join('')}</div>
    ${id?`<div class="btns"><button type="button" class="btn" data-arch>${g.archived?'ホームに戻す':'しまう（達成・中止）'}</button><button type="button" class="btn warn" data-delg>削除</button></div>`:''}
@@ -515,6 +690,11 @@ function goalSheet(id){
   f.addEventListener('click',e=>{
     const t=e.target.closest('button');if(!t)return;
     if(t.dataset.k){kind=t.dataset.k;f.querySelectorAll('[data-k]').forEach(b=>b.setAttribute('aria-pressed',b===t))}
+    if(t.dataset.tpl){const p=TEMPLATES[+t.dataset.tpl].make();
+      $('#gn').value=p.name;gt.value=p.target.toLocaleString('ja-JP');$('#gd').value=p.deadline||'';$('#aa').value=p.auto?p.auto.toLocaleString('ja-JP'):'';$('#gem').checked=!!p.emergency;
+      kind='save';f.querySelectorAll('[data-k]').forEach(b=>b.setAttribute('aria-pressed',b.dataset.k==='save'));
+      icon=p.icon;f.querySelectorAll('[data-i]').forEach(b=>b.setAttribute('aria-pressed',b.dataset.i===icon));
+      f.querySelectorAll('[data-tpl]').forEach(b=>b.setAttribute('aria-pressed',b===t));if(p.note)toast(p.note)}
     if(t.dataset.i){icon=t.dataset.i;f.querySelectorAll('[data-i]').forEach(b=>b.setAttribute('aria-pressed',b===t))}
     if(t.dataset.c){color=t.dataset.c;f.querySelectorAll('[data-c]').forEach(b=>b.setAttribute('aria-pressed',b===t))}
     if('arch' in t.dataset){g.archived=!g.archived;save();closeSheet();view.goal=null;render()}
@@ -529,22 +709,69 @@ function goalSheet(id){
     const startLast=()=>{const t=today();return t.slice(8)>=String(day).padStart(2,'0')?curYM():(()=>{const[y,m]=curYM().split('-').map(Number);const d=new Date(y,m-2,1);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')})()};
     const prev=g.auto||{};
     const auto=amount?{amount,day,last:(prev.amount&&prev.day===day)?prev.last:startLast()}:null;
-    const v={name:$('#gn').value.trim(),target,deadline:$('#gd').value,icon,color,kind,auto};
+    const v={name:$('#gn').value.trim(),target,deadline:$('#gd').value,icon,color,kind,auto,nisa:$('#gnisa').checked,emergency:$('#gem').checked};
     if(id)Object.assign(g,v);else S.goals.push({id:uid(),created:today(),archived:false,...v});
     save();closeSheet();runAuto();if(view.tab!=='home'){view.tab='home';view.goal=null}render();
     toast(id?'保存しました':'目標を作りました');
   });
 }
 
+/* 目標のひな形 */
+const inYear=()=>{const d=new Date();d.setFullYear(d.getFullYear()+1);return d.toISOString().slice(0,10)};
+const TEMPLATES=[
+  {icon:'📅',label:'52週チャレンジ',make:()=>({name:'52週チャレンジ',target:137800,deadline:inYear(),icon:'📅',note:'1週目100円、2週目200円…と毎週100円ずつ増やして1年で137,800円'})},
+  {icon:'🪙',label:'500円玉貯金',make:()=>({name:'500円玉貯金',target:100000,deadline:'',icon:'💰',note:'500円玉が出たら「＋」で入れていきましょう'})},
+  {icon:'🛟',label:'生活防衛資金',make:()=>{const a=avgSpend();return {name:'生活防衛資金',target:a?Math.ceil(a*6/10000)*10000:500000,deadline:'',icon:'🩺',emergency:true,note:a?'ふだんの出費の6か月分にしました':'出費の記録がまだないので仮に50万円にしました'}}},
+  {icon:'🗓️',label:'毎月1万円',make:()=>({name:'毎月1万円',target:120000,deadline:inYear(),icon:'💰',auto:10000,note:'定期積立を毎月1万円にしました'})}
+];
+
+/* 固定費を追加・直す */
+function fixedSheet(id){
+  const isNew=id==='new',x=isNew?{name:'',amount:'',day:27,cat:'その他'}:S.fixed.find(v=>v.id===id);
+  let cat=x.cat;
+  openSheet(`<form id="ff"><h3>${isNew?'固定費を追加':'固定費を直す'}</h3>
+   <div class="two"><div><label for="fn">名前</label><input id="fn" value="${esc(x.name)}" placeholder="例：家賃" maxlength="24" required></div>
+   <div><label for="fa">金額</label><input id="fa" class="num" inputmode="numeric" value="${x.amount?x.amount.toLocaleString('ja-JP'):''}" required></div></div>
+   <label for="fd">支払日</label><select id="fd">${Array.from({length:28},(_,i)=>`<option value="${i+1}" ${x.day===i+1?'selected':''}>${i+1}日</option>`).join('')}</select>
+   <label>分類</label><div class="chips">${CATS.map(([c,i])=>`<button type="button" data-cat="${c}" aria-pressed="${c===cat}">${i} ${c}</button>`).join('')}</div>
+   <p class="hint">次の支払日から、毎月自動で出費に記録します。</p>
+   ${isNew?'':`<div class="btns"><button type="button" class="btn warn" data-delfx>この固定費をやめる</button></div>`}
+   <div class="btns"><button type="button" class="btn" data-close>やめる</button><button class="btn pri">${isNew?'追加':'保存'}</button></div></form>`);
+  const f=$('#ff'),fa=$('#fa');
+  fa.addEventListener('input',()=>{const n=fa.value.replace(/[^0-9]/g,'');fa.value=n?(+n).toLocaleString('ja-JP'):''});
+  f.addEventListener('click',e=>{const t=e.target.closest('button');if(!t)return;
+    if(t.dataset.cat){cat=t.dataset.cat;f.querySelectorAll('[data-cat]').forEach(b=>b.setAttribute('aria-pressed',b===t))}
+    if('delfx' in t.dataset&&confirm('この固定費の自動記録をやめますか？（これまでの記録は残ります）')){S.fixed=S.fixed.filter(v=>v.id!==id);save();closeSheet();render()}});
+  f.addEventListener('submit',e=>{e.preventDefault();
+    const amount=+fa.value.replace(/[^0-9]/g,'');if(!amount)return;
+    const day=+$('#fd').value,v={name:$('#fn').value.trim(),amount,day,cat};
+    if(isNew){const t=today(),passed=+t.slice(8)>=day;S.fixed.push({id:uid(),last:passed?curYM():prevYM(curYM()),...v})}
+    else Object.assign(x,v);
+    save();closeSheet();runAuto();render();toast(isNew?'固定費を追加しました':'保存しました');
+  });
+}
+
+/* バックアップ：ファイルに保存（iPhone は共有シートから「"ファイル"に保存」） */
+async function backupFile(){
+  const name='kotsukotsu-backup-'+today()+'.json';
+  const file=new File([JSON.stringify(S)],name,{type:'application/json'});
+  try{
+    if(navigator.canShare&&navigator.canShare({files:[file]}))await navigator.share({files:[file],title:name});
+    else{const a=document.createElement('a');a.href=URL.createObjectURL(file);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}
+    S.backupAt=today();S.dismiss['bk:'+curYM()]=1;save();render();toast('バックアップを保存しました');
+  }catch(e){if(e&&e.name!=='AbortError')toast('保存できませんでした')}
+}
+
 /* 出費を手で入れる・直す（現金払いなど）。分類を直すと、同じ店は次からその分類になる */
 function spendSheet(id){
   const x=id?S.spend.find(v=>v.id===id):{amount:'',merchant:'',date:today(),time:'',cat:'食費'};
-  let cat=x.cat;
+  let cat=x.cat,feel=x.feel||'';
   openSheet(`<form id="sf"><h3>${id?'出費を直す':'出費を入れる'}</h3>
    <label for="sa">金額</label><input id="sa" class="amount num" inputmode="numeric" value="${x.amount?x.amount.toLocaleString('ja-JP'):''}" placeholder="0" required>
    <div class="two"><div><label for="sm">お店・内容</label><input id="sm" value="${esc(x.merchant)}" placeholder="例：ランチ" maxlength="40"></div>
    <div><label for="sd">日付</label><input id="sd" type="date" value="${x.date}" required></div></div>
    <label>分類</label><div class="chips">${CATS.map(([c,i])=>`<button type="button" data-cat="${c}" aria-pressed="${c===cat}">${i} ${c}</button>`).join('')}</div>
+   <label>ふり返り（なくてもよい）</label><div class="seg">${[['good','👍 よかった'],['','ふつう'],['bad','💸 ムダだった']].map(([k,l])=>`<button type="button" data-feel="${k}" aria-pressed="${feel===k}" class="${k==='bad'?'out':''}">${l}</button>`).join('')}</div>
    ${id&&x.src==='applepay'?`<p class="hint">Apple Pay から取り込み${x.card?'（'+esc(x.card)+'）':''}。分類を直すと「${esc(x.merchant)}」は次からその分類になります。</p>`:''}
    ${id?`<div class="btns"><button type="button" class="btn warn" data-delsp>この出費を削除</button></div>`:''}
    <div class="btns"><button type="button" class="btn" data-close>やめる</button><button class="btn pri">${id?'保存':'入れる'}</button></div></form>`);
@@ -552,10 +779,11 @@ function spendSheet(id){
   sa.addEventListener('input',()=>{const n=sa.value.replace(/[^0-9]/g,'');sa.value=n?(+n).toLocaleString('ja-JP'):''});
   f.addEventListener('click',e=>{const t=e.target.closest('button');if(!t)return;
     if(t.dataset.cat){cat=t.dataset.cat;f.querySelectorAll('[data-cat]').forEach(b=>b.setAttribute('aria-pressed',b===t))}
+    if('feel' in t.dataset){feel=t.dataset.feel;f.querySelectorAll('[data-feel]').forEach(b=>b.setAttribute('aria-pressed',b===t))}
     if('delsp' in t.dataset&&confirm('この出費を削除しますか？')){S.spend=S.spend.filter(v=>v.id!==id);save();closeSheet();render()}});
   f.addEventListener('submit',e=>{e.preventDefault();
     const n=+sa.value.replace(/[^0-9]/g,'');if(!n){sa.focus();return}
-    const v={amount:n,merchant:$('#sm').value.trim()||'（メモなし）',date:$('#sd').value||today(),cat};
+    const v={amount:n,merchant:$('#sm').value.trim()||'（メモなし）',date:$('#sd').value||today(),cat,feel};
     if(id){
       if(cat!==x.cat&&x.src==='applepay'){S.rules[x.merchant]=cat;for(const o of S.spend)if(o.src==='applepay'&&o.merchant===x.merchant)o.cat=cat}
       Object.assign(x,v);
@@ -585,11 +813,17 @@ function aiSheet(){
    <label for="aq">相談したいこと</label><textarea id="aq" rows="3">${ASK[0][1]}</textarea>
    <details style="margin-top:10px"><summary class="hint" style="cursor:pointer">送る内容を見る</summary><pre id="ap" style="white-space:pre-wrap;font-size:12px;color:var(--sub);background:var(--bg);border-radius:8px;padding:8px;max-height:200px;overflow:auto"></pre></details>
    <p class="hint">AIの答えは一般的な情報です。投資の判断は自分で、必要なら専門家にも相談してください。</p>
-   <div class="btns"><button type="button" class="btn" data-close>やめる</button><button class="btn pri">コピーして Claude を開く</button></div></form>`);
+   <div class="btns"><button type="button" class="btn" data-close>やめる</button><button class="btn pri">コピーして Claude を開く</button></div>
+   <details style="margin-top:12px"${S.aiNote?' open':''}><summary class="hint" style="cursor:pointer">Claude の答えを残す（次の相談に要点が入ります）</summary>
+    <textarea id="an" rows="4" placeholder="Claude の答えを貼り付け">${esc(S.aiNote?.text||'')}</textarea>
+    ${S.aiNote?`<p class="hint">前回保存：${md(S.aiNote.date)}</p>`:''}
+    <div class="btns"><button type="button" class="btn" data-savenote>答えを保存</button></div></details></form>`);
   const f=$('#af'),aq=$('#aq'),ap=$('#ap');
   const upd=()=>ap.textContent=summaryText(aq.value.trim());upd();
   aq.addEventListener('input',upd);
-  f.addEventListener('click',e=>{const t=e.target.closest('[data-ask]');if(!t)return;aq.value=ASK[+t.dataset.ask][1];upd();
+  f.addEventListener('click',e=>{
+    if(e.target.closest('[data-savenote]')){const v=$('#an').value.trim();S.aiNote=v?{date:today(),text:v}:null;save();upd();toast(v?'答えを保存しました':'消しました');return}
+    const t=e.target.closest('[data-ask]');if(!t)return;aq.value=ASK[+t.dataset.ask][1];upd();
     f.querySelectorAll('[data-ask]').forEach(b=>b.setAttribute('aria-pressed',b===t))});
   f.addEventListener('submit',async e=>{e.preventDefault();const s=summaryText(aq.value.trim());
     try{await navigator.clipboard.writeText(s)}catch(_){ap.parentElement.open=true;toast('内容を長押しでコピーしてください');return}
@@ -611,8 +845,37 @@ $('#payfile').addEventListener('change',async e=>{
   render();toast(r.total?(r.n?`${r.n}件を取り込みました`:'新しい記録はありませんでした'):'記録が見つかりませんでした（ファイルを確認）');
 });
 $('#sheet').addEventListener('click',e=>{if(e.target.id==='sheet'||e.target.closest('[data-close]'))closeSheet()});
+$('#restorefile').addEventListener('change',async e=>{
+  const file=e.target.files[0];e.target.value='';if(!file)return;
+  try{const s=JSON.parse(await file.text());if(!Array.isArray(s.goals)||!Array.isArray(s.tx))throw 0;
+    if(confirm(`${file.name} から、目標${s.goals.length}件・記録${s.tx.length}件・出費${(s.spend||[]).length}件を戻します。いまのデータは置き換わります。`)){S=fill({v:1,theme:'auto',...s});save();render();toast('戻しました')}}
+  catch(_){toast('バックアップのファイルではないようです')}
+});
+/* 入力に合わせて：シミュレーターを計算し直す、金額にカンマ、給料日を保存 */
+$('#app').addEventListener('input',e=>{
+  const t=e.target;
+  if(t.matches('#bt,[data-bcat],#sim-m,#sim-i')){const n=t.value.replace(/[^0-9]/g,'');t.value=n?(+n).toLocaleString('ja-JP'):''}
+  if(t.id&&t.id.startsWith('sim-')){
+    const n=id=>+($('#'+id).value.replace(/[^0-9.]/g,''))||0;
+    sim={m:n('sim-m'),i:n('sim-i'),y:Math.round(n('sim-y')),r:n('sim-r')};$('#simout').innerHTML=simOut();
+  }
+});
+$('#app').addEventListener('change',e=>{if(e.target.id==='payday'){S.payday=+e.target.value||null;save();toast(S.payday?`給料日を${S.payday}日にしました`:'給料日をなしにしました')}});
 $('#app').addEventListener('click',async e=>{
   const t=e.target.closest('button');if(!t)return;const d=t.dataset;
+  if(d.dismiss){S.dismiss[d.dismiss]=1;save();render();return}
+  if('hide' in d){S.hide=!S.hide;save();render();return}
+  if('addany' in d){S.dismiss['pay:'+curYM()]=1;save();txSheet(null,null,'先取り貯金');return}
+  if('backup' in d){backupFile();return}
+  if('restore' in d){$('#restorefile').click();return}
+  if(d.leftover){txSheet(null,+d.leftover,`${+curYM().slice(5)}月の予算の余り`);return}
+  if(d.fixed){fixedSheet(d.fixed);return}
+  if('savebudget' in d){
+    const num=v=>+String(v).replace(/[^0-9]/g,'')||0;
+    S.budget.total=num($('#bt').value);S.budget.cats={};
+    document.querySelectorAll('[data-bcat]').forEach(i=>{const n=num(i.value);if(n)S.budget.cats[i.dataset.bcat]=n});
+    save();toast('予算を保存しました');return;
+  }
   if(d.open){view.goal=d.open;render()}
   else if('back' in d){view.goal=null;render()}
   else if(d.add)txSheet(d.add);
@@ -645,6 +908,10 @@ $('#app').addEventListener('click',async e=>{
 
 runAuto();
 render();
+/* すぐ記録：#add で貯金、#spend で出費の入力を開く（Android はアイコン長押しのメニューから） */
+if(location.hash==='#add')txSheet();
+else if(location.hash==='#spend'){view.tab='spend';render();spendSheet()}
+if(location.hash)history.replaceState(null,'',location.pathname);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden){const n=S.tx.length;runAuto();if(S.tx.length!==n)render()}});
 if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('sw.js');
 </script>
