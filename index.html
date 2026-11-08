@@ -190,7 +190,7 @@ const KEY='kotsukotsu-v1';
 const ICONS=['💰','✈️','🏠','🚗','💻','🎓','🎁','📷','🎮','🏝️','💍','🩺'];
 const COLORS=['#1f6f5c','#2f6db5','#b4452f','#c08a00','#7a4fb0','#3a8f9e'];
 const $=s=>document.querySelector(s);
-const yen=n=>'¥'+Math.round(n).toLocaleString('ja-JP');
+const yen=n=>(n<0?'−¥':'¥')+Math.abs(Math.round(n)).toLocaleString('ja-JP');
 const sgn=n=>(n>0?'+':n<0?'−':'')+yen(Math.abs(n));
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
@@ -208,7 +208,7 @@ function load(){
 /* 出費まわりの項目がない古いデータにも足す */
 function fill(s){
   s.spend=s.spend||[];s.rules=s.rules||{};s.seen=s.seen||{};
-  s.budget=s.budget||{total:0,cats:{}};s.fixed=s.fixed||[];s.dismiss=s.dismiss||{};s.wish=s.wish||[];
+  s.budget=s.budget||{total:0,cats:{}};s.fixed=s.fixed||[];s.dismiss=s.dismiss||{};s.wish=s.wish||[];s.cards=s.cards||[];
   /* 銀行口座の残高（手で入れる）。最初はゆうちょと三菱UFJ */
   if(!s.accounts)s.accounts=[{id:'yucho',name:'ゆうちょ銀行',icon:'📮',bal:null,at:null,hist:[]},{id:'mufg',name:'三菱UFJ銀行',icon:'🏦',bal:null,at:null,hist:[]}];
   return s;
@@ -513,6 +513,8 @@ function summaryText(q){
   const ms=[];let k=now;for(let i=0;i<6;i++){ms.unshift(k);const[y,m]=k.split('-').map(Number);const d=new Date(y,m-2,1);k=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')}
   const ac=S.accounts.filter(x=>x.bal!=null);
   if(ac.length)L.push('銀行口座の残高：'+ac.map(x=>`${x.name} ${yen(x.bal)}（${x.at}時点）`).join('、')+`、合計 ${yen(bankTotal())}`);
+  const ub=upcomingBills();if(ub.length)L.push('クレジットカードの引き落とし予定：'+ub.slice(0,6).map(b=>`${b.payD} ${b.card.name} ${b.status==='fixed'?yen(b.amount)+'（確定）':'約'+yen(b.est)+'（見込み）'}`).join('、'));
+  if(ac.length&&S.cards.length){const P=projection();L.push(`3か月後（${P.end}）の口座残高の見込み：${yen(P.series[P.series.length-1].v)}`+(Object.values(P.mins).some(m=>m.v<0)?'（途中で残高が足りなくなる口座あり）':''))}
   L.push('月ごとの増減（直近6か月）：'+ms.map(m=>`${+m.slice(5)}月 ${sgn(monthNet(m))}`).join(' / '),'');
   L.push('■ 目標');
   for(const g of activeGoals()){
@@ -592,12 +594,15 @@ function bankHTML(){
     const h=x.hist||[],prev=h.length>1?h[h.length-2].v:null;
     return `<li><span class="m">${x.icon} ${esc(x.name)}<br><small style="color:var(--sub)">${x.at?md(x.at)+' 時点':'未入力'}</small></span><span class="a num" style="text-align:right">${x.bal!=null?yen(x.bal):'—'}${prev!=null?`<br><small class="${x.bal-prev>=0?'plus':'minus'}">前回比 ${sgn(x.bal-prev)}</small>`:''}</span><button class="x" data-bank="${x.id}" aria-label="${esc(x.name)}の残高を更新">›</button></li>`}).join('');
   return `<h2 style="display:flex;justify-content:space-between;align-items:center">口座の残高<button class="nb" data-bankall>残高を入れる</button></h2><section class="card"><ul class="list">${li}</ul>
-  ${has?`<div style="margin-top:8px;font-size:13px;color:var(--sub);line-height:1.7"><div>合計 <b class="num" style="color:var(--ink)">${yen(tot)}</b></div>${saved?`<div>目標に入れた貯金を除くと <b class="num" style="color:var(--ink)">${yen(tot-saved)}</b></div>`:''}</div>`:'<p class="hint" style="margin:6px 0 0">› を押して、銀行アプリに出ている残高を入れてください。月1回くらい更新すると、増え方がわかります。</p>'}</section>`;
+  ${has?`<div style="margin-top:8px;font-size:13px;color:var(--sub);line-height:1.7"><div>合計 <b class="num" style="color:var(--ink)">${yen(tot)}</b></div>${saved?`<div>目標に入れた貯金を除くと <b class="num" style="color:var(--ink)">${yen(tot-saved)}</b></div>`:''}${(()=>{const ub=upcomingBills().filter(b=>b.status!=='future');if(!ub.length)return '';const due=ub.reduce((a,b)=>a+billAmt(b),0);
+    return `<div>💳 カードの引き落とし予定 <b class="num" style="color:var(--ink)">${yen(due)}</b>（〜${md(ub[ub.length-1].payD)}）</div><div>それも除いた、自由に使えるお金 <b class="num ${tot-saved-due>=0?'':'minus'}" style="${tot-saved-due>=0?'color:var(--ink)':''}">${yen(tot-saved-due)}</b></div>`})()}</div>`:'<p class="hint" style="margin:6px 0 0">› を押して、銀行アプリに出ている残高を入れてください。月1回くらい更新すると、増え方がわかります。</p>'}</section>`;
 }
 /* お知らせ：起きたときだけ、ホームの上に1行ずつ（最大3つ）。×で今月は出さない */
 function noticesHTML(){
   const cur=curYM(),day=+today().slice(8),N=[],off=k=>S.dismiss[k];
   const note=(key,text,btn)=>N.push(`<div class="note"><span>${text}</span>${btn||''}<button class="x" data-dismiss="${key}" aria-label="閉じる">×</button></div>`);
+  if(S.cards.length&&S.accounts.some(a=>a.bal!=null)){const P=projection(45),w=Object.entries(P.mins).find(([,m])=>m.v<0);
+    if(w&&!off('short:'+w[0]+':'+w[1].d)){const a=S.accounts.find(x=>x.id===w[0]);note('short:'+w[0]+':'+w[1].d,`⚠️ ${md(w[1].d)}ごろ ${esc(a.name)}の残高が足りなくなりそうです（見込み ${yen(w[1].v)}）`,'<button class="nb" data-tabgo="chart">見る</button>')}}
   const stP=monthNet(prevYM(cur))>0?streak():0;
   if(day>=20&&stP>=1&&monthNet(cur)<=0&&!off('st:'+cur))note('st:'+cur,`今月はまだプラスになっていません。🔥${stP}か月連続を守りましょう（あと${daysInMonth(cur)-day+1}日）`,'<button class="nb" data-addtx>記録</button>');
   if(S.payday&&day>=S.payday&&!off('pay:'+cur))note('pay:'+cur,'給料日です。先取り貯金はしましたか？','<button class="nb" data-addany>記録</button>');
@@ -686,7 +691,7 @@ function spendHTML(){
    <button class="btn ai" data-pay>Apple Pay の記録を取り込む</button>
    <button class="btn" style="width:100%;margin-top:8px" data-csvin>銀行の明細（CSV）を取り込む</button>
    ${S.payAt?`<p class="hint" style="text-align:center">前回の取り込み：${esc(S.payAt)}</p>`:''}</section>`;
-  if(isCur)h+=wishHTML();
+  if(isCur)h+=cardsHTML()+wishHTML();
   if(cats.length)h+=`<section class="card">${cats.map(([c,v])=>{const cb=S.budget.cats[c],l=level(v,cb);
     return `<div class="cat"><span>${CAT_ICON[c]||'📦'} ${c}</span><span class="cbar"><i style="width:${cb?Math.min(100,v/cb*100):v/max*100}%;background:${l==='over'?'var(--out)':l==='warn'?'var(--done)':CAT_COLOR[c]||'var(--acc)'}"></i></span><b class="num ${l==='over'?'minus':''}">${yen(v)}${cb?`<small class="cb"> / ${short(cb)}</small>`:''}</b></div>`}).join('')}</section>`;
   const rc=recurring();
@@ -723,6 +728,7 @@ function chartHTML(){
   svg+=`</svg>`;
   const nets=months.slice(-6).map(m=>[m,monthNet(m)]);
   return `<h1><span>グラフ</span><button class="nb" data-report>📝 月の通信簿</button></h1>
+  ${projHTML()}
   ${calHTML()}
   <h2>月末の貯金</h2><section class="card chart"><div style="font-size:13px;color:var(--sub);margin-bottom:6px">月末の貯金（12か月）</div>${S.tx.length?svg:'<div class="empty">記録がたまると表示されます</div>'}
   <div class="legend">${gs.map(g=>`<span style="--c:${g.color}">${esc(g.name)}</span>`).join('')}</div></section>
@@ -773,6 +779,13 @@ function settingsHTML(){
   <h2>目標</h2><section class="card"><button class="btn" style="width:100%" data-newgoal>＋ 目標を作る</button>
    <label for="payday">給料日（先取り貯金のお知らせ・なしは空）</label><select id="payday"><option value="">なし</option>${Array.from({length:31},(_,i)=>`<option value="${i+1}" ${S.payday===i+1?'selected':''}>${i+1}日</option>`).join('')}</select></section>
   ${activeGoals().length&&S.accounts.length?preHTML():''}
+  <h2>クレジットカード（引き落としの予測）</h2><section class="card">
+   ${S.cards.length?`<ul class="list">${S.cards.map(c=>`<li><span class="m">💳 ${esc(c.name)}<br><small style="color:var(--sub)">${c.close>=31?'末日':c.close+'日'}締め・${c.payMonth===2?'翌々月':'翌月'}${c.payDay>=31?'末日':c.payDay+'日'}・${esc((S.accounts.find(a=>a.id===c.acct)||{}).name||'口座なし')}</small></span><button class="x" data-card="${c.id}" aria-label="編集">›</button></li>`).join('')}</ul>`:''}
+   ${unknownCardNames().length?`<p class="hint">Apple Pay の記録に出てくる、まだ登録していないカード：</p><div class="chips">${unknownCardNames().map(n=>`<button type="button" data-cardname="${esc(n)}">＋ ${esc(n)}</button>`).join('')}</div>`:''}
+   <div class="btns"><button class="btn" data-card="new">＋ カードを登録</button></div>
+   <div class="two"><div><label for="sal">手取りの給料（見込みに使う）</label><input id="sal" class="num" inputmode="numeric" value="${S.salary&&S.salary.amount?S.salary.amount.toLocaleString('ja-JP'):''}" placeholder="例：250,000"></div>
+   <div><label for="salac">振込先</label><select id="salac">${S.accounts.map(a=>`<option value="${a.id}" ${(S.salary&&S.salary.acct||'mufg')===a.id?'selected':''}>${a.icon} ${esc(a.name)}</option>`).join('')}</select></div></div>
+   <p class="hint">給料日（上の「目標」の欄）に入る額です。カードの引き落とし・先取り貯金と合わせて、グラフの「口座残高の見込み」を計算します。</p></section>
   <h2>口座（残高を手で入れる）</h2><section class="card">
    ${S.accounts.length?`<ul class="list">${S.accounts.map(x=>`<li><span class="m">${x.icon} ${esc(x.name)}</span><span class="a num">${x.bal!=null?yen(x.bal):'—'}</span><button class="x" data-bank="${x.id}" aria-label="編集">›</button></li>`).join('')}</ul>`:''}
    <p class="hint">銀行の残高は自動では読めないので、銀行アプリを見て入れます。前回から30日たつとホームでお知らせします。</p>
@@ -955,7 +968,8 @@ function fixedSheet(id){
   openSheet(`<form id="ff"><h3>${isNew?'固定費を追加':'固定費を直す'}</h3>
    <div class="two"><div><label for="fn">名前</label><input id="fn" value="${esc(x.name)}" placeholder="例：家賃" maxlength="24" required></div>
    <div><label for="fa">金額</label><input id="fa" class="num" inputmode="numeric" value="${x.amount?x.amount.toLocaleString('ja-JP'):''}" required></div></div>
-   <label for="fd">支払日</label><select id="fd">${Array.from({length:28},(_,i)=>`<option value="${i+1}" ${x.day===i+1?'selected':''}>${i+1}日</option>`).join('')}</select>
+   <div class="two"><div><label for="fd">支払日</label><select id="fd">${Array.from({length:28},(_,i)=>`<option value="${i+1}" ${x.day===i+1?'selected':''}>${i+1}日</option>`).join('')}</select></div>
+   <div><label for="fpb">支払い方法</label><select id="fpb">${payOptions(x.payBy||'',true)}</select></div></div>
    <label>分類</label><div class="chips">${CATS.map(([c,i])=>`<button type="button" data-cat="${c}" aria-pressed="${c===cat}">${i} ${c}</button>`).join('')}</div>
    <p class="hint">次の支払日から、毎月自動で出費に記録します。</p>
    ${isNew?'':`<div class="btns"><button type="button" class="btn warn" data-delfx>この固定費をやめる</button></div>`}
@@ -967,7 +981,7 @@ function fixedSheet(id){
     if('delfx' in t.dataset&&confirm('この固定費の自動記録をやめますか？（これまでの記録は残ります）')){S.fixed=S.fixed.filter(v=>v.id!==id);save();closeSheet();render()}});
   f.addEventListener('submit',e=>{e.preventDefault();
     const amount=+fa.value.replace(/[^0-9]/g,'');if(!amount)return;
-    const day=+$('#fd').value,v={name:$('#fn').value.trim(),amount,day,cat};
+    const day=+$('#fd').value,v={name:$('#fn').value.trim(),amount,day,cat,payBy:$('#fpb').value};
     if(isNew){const t=today(),passed=+t.slice(8)>=day;S.fixed.push({id:uid(),last:passed?curYM():prevYM(curYM()),...v})}
     else Object.assign(x,v);
     save();closeSheet();runAuto();render();toast(isNew?'固定費を追加しました':'保存しました');
@@ -994,6 +1008,7 @@ function spendSheet(id){
    <div class="two"><div><label for="sm">お店・内容</label><input id="sm" value="${esc(x.merchant)}" placeholder="例：ランチ" maxlength="40"></div>
    <div><label for="sd">日付</label><input id="sd" type="date" value="${x.date}" required></div></div>
    <label>分類</label><div class="chips">${CATS.map(([c,i])=>`<button type="button" data-cat="${c}" aria-pressed="${c===cat}">${i} ${c}</button>`).join('')}</div>
+   ${S.cards.length?`<label for="spb">支払い</label><select id="spb">${payOptions(x.payBy||'',false)}</select>`:''}
    <label>ふり返り（なくてもよい）</label><div class="seg">${[['good','👍 よかった'],['','ふつう'],['bad','💸 ムダだった']].map(([k,l])=>`<button type="button" data-feel="${k}" aria-pressed="${feel===k}" class="${k==='bad'?'out':''}">${l}</button>`).join('')}</div>
    ${id&&x.src==='applepay'?`<p class="hint">Apple Pay から取り込み${x.card?'（'+esc(x.card)+'）':''}。分類を直すと「${esc(x.merchant)}」は次からその分類になります。</p>`:''}
    ${id?`<div class="btns"><button type="button" class="btn warn" data-delsp>この出費を削除</button></div>`:''}
@@ -1007,6 +1022,7 @@ function spendSheet(id){
   f.addEventListener('submit',e=>{e.preventDefault();
     const n=+sa.value.replace(/[^0-9]/g,'');if(!n){sa.focus();return}
     const v={amount:n,merchant:$('#sm').value.trim()||'（メモなし）',date:$('#sd').value||today(),cat,feel};
+    if($('#spb'))v.payBy=$('#spb').value;
     if(id){
       if(cat!==x.cat&&x.src==='applepay'){S.rules[x.merchant]=cat;for(const o of S.spend)if(o.src==='applepay'&&o.merchant===x.merchant)o.cat=cat}
       Object.assign(x,v);
@@ -1278,6 +1294,135 @@ function preSave(){
   preDraft=null;save();render();$('#pre')?.scrollIntoView({block:'start'});toast('保存しました。やることを順に進めましょう');
 }
 
+/* ---------- クレジットカード：締め日・引き落とし日から請求を予測 ---------- */
+const fmtD=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+const addM=(k,n)=>{const[y,m]=k.split('-').map(Number);const d=new Date(y,m-1+n,1);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')};
+const dayIn=(k,day)=>k+'-'+String(Math.min(day,daysInMonth(k))).padStart(2,'0');
+/* 土日にあたる日：引き落としは翌月曜、給料は前の金曜（祝日は見ていない） */
+const bizNext=s=>{const d=new Date(s);const w=d.getDay();if(w===6)d.setDate(d.getDate()+2);if(w===0)d.setDate(d.getDate()+1);return fmtD(d)};
+const bizPrev=s=>{const d=new Date(s);const w=d.getDay();if(w===6)d.setDate(d.getDate()-1);if(w===0)d.setDate(d.getDate()-2);return fmtD(d)};
+const cardById=v=>v&&v.startsWith('card:')?S.cards.find(c=>'card:'+c.id===v)||null:null;
+/* その出費がどのカードか。手で選んだもの → 固定費の設定 → Apple Pay のカード名 の順 */
+function cardOf(x){
+  if(x.payBy)return cardById(x.payBy);
+  if(x.src==='fixed'){const f=S.fixed.find(f=>f.name===x.merchant);return f?cardById(f.payBy):null}
+  if(x.src==='applepay'){const s=(x.card||'').toLowerCase();
+    return S.cards.find(c=>c.match&&s.includes(c.match.toLowerCase()))||(S.cards.length===1&&!S.cards[0].match?S.cards[0]:null)}
+  return null;
+}
+const cycleKey=(c,date)=>{const k=ym(date);return +date.slice(8)<=Math.min(c.close,daysInMonth(k))?k:addM(k,1)};
+const closeDate=(c,k)=>dayIn(k,c.close);
+const payDate=(c,k)=>bizNext(dayIn(addM(k,c.payMonth||1),c.payDay));
+/* カードごとの請求：status は paid（引き落とし済み）/ fixed（締め後・確定）/ open（いま使っている分）/ future（まだ始まっていない） */
+function cardBills(c,ahead=3){
+  const t=today(),by={};
+  for(const x of S.spend){if(cardOf(x)!==c)continue;const k=cycleKey(c,x.date);(by[k]=by[k]||{amount:0,n:0});by[k].amount+=x.amount;by[k].n++}
+  const openK=cycleKey(c,t),keys=new Set(Object.keys(by).filter(k=>payDate(c,k)>=addM(curYM(),-2)+'-01'));
+  for(let i=0;i<=ahead;i++)keys.add(addM(openK,i));
+  const done=Object.keys(by).filter(k=>k<openK).sort().slice(-3),avg=done.length?Math.round(done.reduce((a,k)=>a+by[k].amount,0)/done.length):0;
+  /* まだ記録されていない、このカード払いの固定費（これからの分） */
+  const sched={};for(const f of S.fixed){if(f.payBy!=='card:'+c.id)continue;
+    for(let k=f.last?nextYM(f.last):curYM(),i=0;i<=ahead+1;i++,k=nextYM(k)){const d=dayIn(k,f.day);if(d<=t)continue;const ck=cycleKey(c,d);sched[ck]=(sched[ck]||0)+f.amount}}
+  return [...keys].sort().map(k=>{
+    const b=by[k]||{amount:0,n:0},cd=closeDate(c,k),pd=payDate(c,k);
+    const status=pd<t?'paid':cd<t?'fixed':k===openK?'open':'future';
+    let est=b.amount;
+    if(status==='open'){const st=new Date(closeDate(c,addM(k,-1)));st.setDate(st.getDate()+1);
+      const frac=(new Date(t)-st)/864e5/((new Date(cd)-st)/864e5+1);est=Math.max(b.amount,frac>.25?Math.round(b.amount/Math.max(frac,.01)):avg)}
+    if(status==='future')est=Math.max(b.amount,avg);
+    const fx=sched[k]||0;
+    /* 平均にはふだんの固定費も入っているので、平均を使った月は固定費を重ねて足さない */
+    if(fx&&(status==='open'||status==='future'))est=Math.max(est,b.amount+fx);
+    return {key:k,card:c,closeD:cd,payD:pd,amount:b.amount,n:b.n,status,est,fx};
+  });
+}
+const billAmt=b=>b.status==='paid'||b.status==='fixed'?b.amount:b.est;
+const upcomingBills=()=>S.cards.flatMap(c=>cardBills(c)).filter(b=>b.payD>=today()&&billAmt(b)>0).sort((a,b)=>a.payD.localeCompare(b.payD));
+
+/* ---------- 口座残高の見込み：カードの引き落とし・給料・先取り・口座払いの固定費 ---------- */
+function projection(days=92){
+  const t=today(),end=(()=>{const d=new Date(t);d.setDate(d.getDate()+days);return fmtD(d)})();
+  const acs=S.accounts.filter(a=>a.bal!=null),since=a=>a.at||t,ev=[];
+  const push=(acct,date,amount,label,kind)=>{const a=acs.find(x=>x.id===acct);if(!a||date<=since(a)||date>end||!amount)return;ev.push({acct,date,amount,label,kind})};
+  const months=[];for(let k=addM(ym(acs.reduce((m,a)=>since(a)<m?since(a):m,t)),0);k<=ym(end);k=addM(k,1))months.push(k);
+  for(const c of S.cards)for(const b of cardBills(c,4))push(c.acct,b.payD,-billAmt(b),`💳 ${c.name}（${+b.key.slice(5)}月締め${b.status==='fixed'||b.status==='paid'?'・確定':'・見込み'}）`,'card');
+  if(S.salary&&S.salary.amount&&S.payday)for(const k of months)push(S.salary.acct,bizPrev(dayIn(k,S.payday)),S.salary.amount,'💴 給料','pay');
+  if(S.pre&&S.pre.amount)for(const k of months){const d=dayIn(k,S.pre.day);
+    if(S.pre.way==='invest')push(S.pre.from,d,-S.pre.amount,'📈 積立（証券口座へ）','pre');
+    else{push(S.pre.from,d,-S.pre.amount,'🐷 先取り貯金（出す）','pre');push(S.pre.to,d,S.pre.amount,'🐷 先取り貯金（入る）','pre')}}
+  for(const f of S.fixed)if(f.payBy&&f.payBy.startsWith('acct:'))for(const k of months)push(f.payBy.slice(5),dayIn(k,f.day),-f.amount,'🏠 '+f.name,'fixed');
+  ev.sort((a,b)=>a.date.localeCompare(b.date)||a.amount-b.amount);
+  const bal=Object.fromEntries(acs.map(a=>[a.id,a.bal])),mins={};
+  const nowB={...bal};for(const e of ev)if(e.date<=t)nowB[e.acct]+=e.amount;
+  for(const e of ev){bal[e.acct]+=e.amount;e.after=bal[e.acct];if(e.date>t&&(!mins[e.acct]||e.after<mins[e.acct].v))mins[e.acct]={v:e.after,d:e.date}}
+  const series=[];const run={...nowB};let i=0;const fut=ev.filter(e=>e.date>t);
+  for(let d=new Date(t);fmtD(d)<=end;d.setDate(d.getDate()+1)){const s=fmtD(d);while(i<fut.length&&fut[i].date<=s){run[fut[i].acct]+=fut[i].amount;i++}series.push({d:s,v:Object.values(run).reduce((a,b)=>a+b,0)})}
+  return {ev:fut,now:nowB,mins,series,end,acs};
+}
+
+/* 支払い方法の選び方（出費・固定費） */
+function payOptions(sel,withAcct){
+  return `<option value="">${withAcct?'現金・そのほか':'自動（Apple Pay のカード名から・手入力は現金）'}</option>`
+   +S.cards.map(c=>`<option value="card:${c.id}" ${sel==='card:'+c.id?'selected':''}>💳 ${esc(c.name)}</option>`).join('')
+   +(withAcct?S.accounts.map(a=>`<option value="acct:${a.id}" ${sel==='acct:'+a.id?'selected':''}>${a.icon} ${esc(a.name)}から引き落とし</option>`).join(''):'')
+   +(withAcct?'':`<option value="cash" ${sel==='cash'?'selected':''}>現金・口座（カードではない）</option>`);
+}
+
+/* カードの登録 */
+function cardSheet(id,preName){
+  const isNew=!id||id==='new',c=isNew?{name:preName||'',match:preName||'',close:15,payMonth:1,payDay:10,acct:S.accounts.some(a=>a.id==='mufg')?'mufg':(S.accounts[0]||{}).id}:S.cards.find(x=>x.id===id);
+  const days=(sel,last)=>Array.from({length:31},(_,i)=>`<option value="${i+1}" ${sel===i+1?'selected':''}>${i===30&&last?'末日':(i+1)+'日'}</option>`).join('');
+  openSheet(`<form id="cdf"><h3>${isNew?'クレジットカードを登録':'カードを直す'}</h3>
+   <div class="two"><div><label for="cn" style="margin-top:0">名前</label><input id="cn" value="${esc(c.name)}" placeholder="例：楽天カード" maxlength="20" required></div>
+   <div><label for="cm" style="margin-top:0">Apple Pay のカード名に含まれる文字</label><input id="cm" value="${esc(c.match||'')}" placeholder="例：楽天"></div></div>
+   <div class="two"><div><label for="cc">締め日</label><select id="cc">${days(c.close,true)}</select></div>
+   <div><label for="cpm">引き落とし</label><select id="cpm"><option value="1" ${c.payMonth===1?'selected':''}>翌月</option><option value="2" ${c.payMonth===2?'selected':''}>翌々月</option></select></div></div>
+   <div class="two"><div><label for="cpd">引き落とし日</label><select id="cpd">${days(c.payDay,true)}</select></div>
+   <div><label for="cac">引き落とし口座</label><select id="cac">${S.accounts.map(a=>`<option value="${a.id}" ${a.id===c.acct?'selected':''}>${a.icon} ${esc(a.name)}</option>`).join('')}</select></div></div>
+   <p class="hint">例：楽天カードは「末日締め・翌月27日」、三井住友カードは「15日締め・翌月10日」か「月末締め・翌月26日」が多いです。カード会社のアプリで確かめてください。引き落とし日が土日のときは次の月曜で計算します（祝日は見ていません）。</p>
+   ${isNew?'':`<div class="btns"><button type="button" class="btn warn" data-delcd>このカードを消す</button></div>`}
+   <div class="btns"><button type="button" class="btn" data-close>やめる</button><button class="btn pri">${isNew?'登録':'保存'}</button></div></form>`);
+  $('#cdf').addEventListener('click',e=>{if(e.target.closest('[data-delcd]')&&confirm(`${c.name}を消します（出費の記録は残ります）`)){S.cards=S.cards.filter(x=>x!==c);save();closeSheet();render()}});
+  $('#cdf').addEventListener('submit',e=>{e.preventDefault();
+    const v={name:$('#cn').value.trim(),match:$('#cm').value.trim(),close:+$('#cc').value,payMonth:+$('#cpm').value,payDay:+$('#cpd').value,acct:$('#cac').value};
+    if(isNew)S.cards.push({id:uid(),...v});else Object.assign(c,v);save();closeSheet();render();toast(isNew?'カードを登録しました':'保存しました')});
+}
+/* Apple Pay の記録に出てくるカード名で、まだ登録していないもの */
+const unknownCardNames=()=>[...new Set(S.spend.filter(x=>x.src==='applepay'&&x.card&&!cardOf(x)).map(x=>x.card))];
+
+/* 出費タブ：カードの引き落とし */
+function cardsHTML(){
+  if(!S.cards.length)return `<h2>💳 カードの引き落とし</h2><section class="card"><p class="hint" style="margin:0">クレジットカードの締め日・引き落とし日を登録すると、次の引き落とし額と、そのあとの口座残高を予測します。</p><div class="btns"><button class="btn" data-card="new">＋ カードを登録</button></div></section>`;
+  const t=today();
+  return `<h2>💳 カードの引き落とし</h2><section class="card">${S.cards.map(c=>{
+    const bs=cardBills(c).filter(b=>b.payD>=t).slice(0,3);
+    return `<div style="font-weight:700;font-size:14px;margin-top:4px">${esc(c.name)} <small style="color:var(--sub);font-weight:400">${c.close>=31?'末日':c.close+'日'}締め・${c.payMonth===2?'翌々月':'翌月'}${c.payDay>=31?'末日':c.payDay+'日'}</small></div>
+    <ul class="list">${bs.map(b=>`<li><span class="d num" style="width:auto">${md(b.payD)}</span><span class="m">${b.status==='fixed'?'<span class="tag">確定</span> ':''}${+b.key.slice(5)}月締め${b.status==='open'?`（${md(b.closeD)}まで・いま${b.n}件 ${yen(b.amount)}）`:b.status==='future'?'（これから）':`（${b.n}件）`}${b.fx&&b.status!=='fixed'?`<br><small style="color:var(--sub)">固定費 ${yen(b.fx)} を含む</small>`:''}</span><span class="a num">${b.status==='fixed'?yen(b.amount):b.est?'約'+yen(b.est):'—'}</span></li>`).join('')}</ul>`}).join('')}
+   <p class="hint">「約」はいまのペース（まだ始まっていない月はこれまでの平均）での見込みです。確定額はカード会社の明細と少しずれることがあります。</p></section>`;
+}
+
+/* グラフタブ：口座残高の見込み */
+function projHTML(){
+  const acs=S.accounts.filter(a=>a.bal!=null);
+  if(!acs.length)return `<h2>口座残高の見込み</h2><section class="card"><p class="hint" style="margin:0">ホームの「残高を入れる」で口座の残高を入れると、カードの引き落とし・給料・先取り貯金を計算した、これからの残高を表示します。</p></section>`;
+  const P=projection(),s=P.series,mn=Math.min(0,...s.map(x=>x.v)),mx=Math.max(1,...s.map(x=>x.v));
+  const W=340,H=150,L=44,B=18,X=i=>L+(W-L)*i/(s.length-1),Y=v=>H-(v-mn)/(mx-mn||1)*H;
+  let svg=`<svg viewBox="0 0 ${W} ${H+B}" role="img" aria-label="口座残高の見込み">`;
+  for(const v of[mn,(mn+mx)/2,mx])svg+=`<line x1="${L}" x2="${W}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--line)"/><text x="${L-4}" y="${Y(v)+4}" text-anchor="end">${short(v)}</text>`;
+  if(mn<0)svg+=`<line x1="${L}" x2="${W}" y1="${Y(0)}" y2="${Y(0)}" stroke="var(--out)" stroke-dasharray="3 3"/>`;
+  svg+=`<polyline fill="none" stroke="var(--acc)" stroke-width="2" points="${s.map((p,i)=>X(i).toFixed(1)+','+Y(p.v).toFixed(1)).join(' ')}"/>`;
+  s.forEach((p,i)=>{if(p.d.slice(8)==='01')svg+=`<text x="${X(i)}" y="${H+14}" text-anchor="middle">${+p.d.slice(5,7)}月</text>`});
+  svg+='</svg>';
+  const warn=Object.entries(P.mins).filter(([,m])=>m.v<0);
+  const name=id=>(S.accounts.find(a=>a.id===id)||{}).name;
+  return `<h2>口座残高の見込み（3か月）</h2><section class="card chart">
+   <div class="row" style="margin-bottom:6px"><span>いまの見込み <b class="num">${yen(Object.values(P.now).reduce((a,b)=>a+b,0))}</b></span><span>${md(P.end)}ごろ <b class="num">${yen(s[s.length-1].v)}</b></span></div>
+   ${svg}
+   ${warn.map(([id,m])=>`<div class="note" style="margin-top:8px"><span>⚠️ ${md(m.d)}ごろ、${esc(name(id))}の残高が <b class="num minus">${yen(m.v)}</b> になる見込みです。引き落とし前に入金を。</span></div>`).join('')}
+   <ul class="list" style="margin-top:6px">${P.ev.slice(0,12).map(e=>`<li><span class="d num">${md(e.date)}</span><span class="m">${e.label}<br><small style="color:var(--sub)">${esc(name(e.acct))} → ${yen(e.after)}</small></span><span class="a num ${e.amount>=0?'plus':'minus'}">${sgn(e.amount)}</span></li>`).join('')||'<li><span class="m hint">これからの予定はまだありません</span></li>'}</ul>
+   <p class="hint">入れた残高に、その日より後の予定（カードの引き落とし${S.salary&&S.salary.amount?'・給料':''}${S.pre&&S.pre.amount?'・先取り貯金':''}・口座払いの固定費）を足し引きした目安です。${S.salary&&S.salary.amount?'':'設定で手取りの給料を入れると、給料日の入金も入ります。'}現金や口座からの細かい出費は入っていません。</p></section>`;
+}
+
 /* AIに相談：状況のまとめをコピーして Claude を開く */
 function aiSheet(){
   openSheet(`<form id="af"><h3>AIに相談する</h3>
@@ -1335,7 +1480,7 @@ $('#restorefile').addEventListener('change',async e=>{
 /* 入力に合わせて：シミュレーターを計算し直す、金額にカンマ、給料日を保存 */
 $('#app').addEventListener('input',e=>{
   const t=e.target;
-  if(t.matches('#bt,[data-bcat],#sim-m,#sim-i,#pa,#wage')){const n=t.value.replace(/[^0-9]/g,'');t.value=n?(+n).toLocaleString('ja-JP'):''}
+  if(t.matches('#bt,[data-bcat],#sim-m,#sim-i,#pa,#wage,#sal')){const n=t.value.replace(/[^0-9]/g,'');t.value=n?(+n).toLocaleString('ja-JP'):''}
   if(t.id&&t.id.startsWith('sim-')){
     const n=id=>+($('#'+id).value.replace(/[^0-9.]/g,''))||0;
     sim={m:n('sim-m'),i:n('sim-i'),y:Math.round(n('sim-y')),r:n('sim-r')};$('#simout').innerHTML=simOut();
@@ -1344,6 +1489,7 @@ $('#app').addEventListener('input',e=>{
 $('#app').addEventListener('change',e=>{
   const t=e.target;
   if(t.dataset.pchk!=null&&S.pre){S.pre.chk=S.pre.chk||{};S.pre.chk[t.dataset.pchk]=t.checked;save();const n=document.querySelectorAll('#pre [data-pchk]:checked').length,all=document.querySelectorAll('#pre [data-pchk]').length;const h=$('#pre').previousElementSibling.querySelector('small');if(h)h.textContent=`準備 ${n}/${all}`;if(n===all){const nb=newBadges();if(nb.length)celebrate(nb[0][1],'実績をとりました',nb.map(b=>`${b[1]} ${b[2]}：${b[3]}`))}return}
+  if(t.id==='sal'||t.id==='salac'){S.salary={amount:+$('#sal').value.replace(/[^0-9]/g,'')||0,acct:$('#salac').value};save();toast(S.salary.amount?`給料 ${yen(S.salary.amount)} を見込みに入れます`:'給料を見込みから外しました');return}
   if(t.id==='wage'){S.wage=+t.value.replace(/[^0-9]/g,'')||0;save();toast(S.wage?`手取りの時給を ${yen(S.wage)} にしました`:'時給換算をやめました');return}
   if(e.target.id==='payday'){S.payday=+e.target.value||null;save();toast(S.payday?`給料日を${S.payday}日にしました`:'給料日をなしにしました')}});
 $('#app').addEventListener('click',async e=>{
@@ -1352,6 +1498,8 @@ $('#app').addEventListener('click',async e=>{
   if('hide' in d){S.hide=!S.hide;save();render();return}
   if('gaman' in d){gamanSheet();return}
   if('wish' in d){wishSheet();return}
+  if(d.card){cardSheet(d.card);return}
+  if(d.cardname){cardSheet('new',d.cardname);return}
   if(d.wbuy){const w=S.wish.find(x=>x.id===d.wbuy);w.done='bought';save();render();toast('30日待っても欲しかったもの。楽しんでください');return}
   if(d.wskip){const w=S.wish.find(x=>x.id===d.wskip);w.done='skip';save();render();gamanSheet({amount:w.price,memo:w.name});return}
   if('report' in d){reportSheet(d.report||undefined);return}
