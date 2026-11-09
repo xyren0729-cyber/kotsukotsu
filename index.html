@@ -588,7 +588,7 @@ function homeHTML(){
   <div class="row"><span>今月 <b class="num ${net>=0?'plus':'minus'}">${sgn(net)}</b></span>${st>=2?`<span>🔥 ${st}か月連続プラス</span>`:`<span>目標 ${gs.length}件</span>`}</div>
   ${(()=>{const p=pace();return p>0?`<div class="future">このペース（月 ${yen(Math.round(p))}）なら 1年後 <b class="num">${short(totalAll()+p*12)}円</b>・5年後 <b class="num">${short(totalAll()+p*60)}円</b>・10年後 <b class="num">${short(totalAll()+p*120)}円</b></div>`:''})()}
   ${gs.length?`<div class="btns"><button class="btn" data-gaman>🙅 ガマンした</button><button class="btn ai" data-ai style="margin-top:0">💬 AIに相談</button></div>`:''}</section>`;
-  h+=bankHTML();
+  h+=cardHomeHTML()+bankHTML();
   if(!gs.length)h+=`<div class="card empty">まだ目標がありません。<br>「＋」から最初の目標を作りましょう。</div>`;
   for(const g of gs)h+=goalCard(g);
   const arch=S.goals.filter(g=>g.archived);
@@ -1497,6 +1497,24 @@ function cardSheet(id,preName){
 /* Apple Pay の記録に出てくるカード名で、まだ登録していないもの */
 const unknownCardNames=()=>[...new Set(S.spend.filter(x=>x.src==='applepay'&&x.card&&!cardOf(x)).map(x=>x.card))];
 
+/* ホーム：次の引き落とし（カードごとの次回＋月ごとの合計） */
+function cardHomeHTML(){
+  if(!S.cards.length){
+    if(!S.spend.some(x=>x.src==='applepay'))return '';
+    return `<h2>💳 カードの引き落とし予定</h2><section class="card"><p class="hint" style="margin:0">カードの締め日・引き落とし日を登録すると、次にいくら引き落とされるかをここに出します。</p><div class="btns"><button class="btn" data-card="new">＋ カードを登録</button></div></section>`;
+  }
+  const t=today(),all=upcomingBills();
+  const nexts=S.cards.map(c=>all.find(b=>b.card===c)).filter(Boolean);
+  const byM={};for(const b of all)if(ym(b.payD)<=addM(curYM(),2))byM[ym(b.payD)]=(byM[ym(b.payD)]||0)+billAmt(b);
+  const days=s=>Math.round((new Date(s)-new Date(t))/864e5);
+  const amt=b=>b.ov!=null||b.status==='fixed'||b.status==='paid'?yen(billAmt(b)):'約'+yen(billAmt(b));
+  const tag=b=>b.ov!=null?'<span class="tag">請求額</span>':b.status==='fixed'?'<span class="tag">確定</span>':'<span class="tag" style="opacity:.7">見込み</span>';
+  return `<h2 style="display:flex;justify-content:space-between;align-items:center">💳 カードの引き落とし予定<button class="nb" data-tabgo="spend" style="background:var(--accsoft);color:var(--ink)">くわしく</button></h2><section class="card">
+   ${nexts.length?`<ul class="list">${nexts.map(b=>`<li><span class="m" style="white-space:normal">${esc(b.card.name)} ${tag(b)}<br><small style="color:var(--sub)">${md(b.payD)}（${days(b.payD)===0?'今日':days(b.payD)===1?'明日':'あと'+days(b.payD)+'日'}）・${esc((S.accounts.find(a=>a.id===b.card.acct)||{}).name||'')}から</small></span><b class="a num">${amt(b)}</b><button class="x" data-billfix="${b.card.id}|${b.key}" aria-label="請求額を入れる">✎</button></li>`).join('')}</ul>`
+     :'<p class="hint" style="margin:0">これからの引き落としはまだありません。</p>'}
+   ${Object.keys(byM).length?`<div style="display:grid;grid-template-columns:repeat(${Math.min(2,Object.keys(byM).length)},1fr);gap:8px;margin-top:10px">${Object.entries(byM).sort().slice(0,2).map(([m,v])=>`<div style="background:var(--bg);border-radius:10px;padding:8px 10px"><small style="color:var(--sub)">${+m.slice(5)}月の引き落とし合計</small><div class="num" style="font-weight:700;font-size:17px">${yen(v)}</div></div>`).join('')}</div>`:''}
+   <p class="hint" style="margin-bottom:0">確定＝締め日を過ぎた分。見込み＝いまのペースでの予想。カード会社のアプリに請求額が出たら ✎ で入れるとその額になります。</p></section>`;
+}
 /* 出費タブ：カードの引き落とし */
 function cardsHTML(){
   if(!S.cards.length)return `<h2>💳 カードの引き落とし</h2><section class="card"><p class="hint" style="margin:0">クレジットカードの締め日・引き落とし日を登録すると、次の引き落とし額と、そのあとの口座残高を予測します。</p><div class="btns"><button class="btn" data-card="new">＋ カードを登録</button></div></section>`;
